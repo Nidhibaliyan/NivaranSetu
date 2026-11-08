@@ -1,0 +1,126 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    
+    /* Approved NivaranSetu Color Tokens */
+    --color-jet-black: #09090B;
+    --color-pure-white: #FFFFFF;
+    --color-cerulean-blue: #007FFF;
+    --color-neon-rose: #FF2E93;
+    --color-dark-charcoal: #18181B;
+    --color-secondary-charcoal: #27272A;
+    --color-muted-grey: #71717A;
+    --color-light-grey: #E4E4E7;
+    --color-soft-bg: #F4F4F5;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--color-pure-white);
+    color: var(--color-jet-black);
+  }
+
+  .dark body {
+    background-color: var(--color-jet-black);
+    color: var(--color-pure-white);
+  }
+}
+
+/* Custom scrollbar for sleek dashboard feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(113, 113, 122, 0.3);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(113, 113, 122, 0.5);
+}
+
+@keyframes scan {
+  0% {
+    top: 0%;
+    opacity: 0.8;
+  }
+  50% {
+    top: 96%;
+    opacity: 1;
+  }
+  100% {
+    top: 0%;
+    opacity: 0.8;
+  }
+}
+
+/* NivaranSetu Animated Bridge Logo Keyframes */
+@keyframes bridgeSpanLeft {
+  0% {
+    stroke-dashoffset: 30;
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+@keyframes bridgeSpanRight {
+  0% {
+    stroke-dashoffset: -30;
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+@keyframes keystonePulse {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.4);
+    opacity: 1;
+    filter: drop-shadow(0 0 6px #007FFF);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+    filter: drop-shadow(0 0 2px #007FFF);
+  }
+}
+
+@keyframes fadeInBrand {
+  0% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeInBrand 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

@@ -1,0 +1,278 @@
+export type AppTheme = 'dark' | 'light' | 'system';
+export type AppMode = 'simple' | 'detailed';
+
+export type LanguageCode =
+  | 'en'
+  | 'hi'
+  | 'bn'
+  | 'mr'
+  | 'ta'
+  | 'te'
+  | 'kn'
+  | 'ml'
+  | 'gu'
+  | 'pa'
+  | 'or'
+  | 'ur';
+
+export interface LanguageOption {
+  code: LanguageCode;
+  label: string;
+  nativeLabel: string;
+  supported: boolean;
+}
+
+export type GrievanceCategory =
+  | 'banking_financial'
+  | 'consumer_ecommerce'
+  | 'municipal_civic'
+  | 'telecom_isp'
+  | 'real_estate_rera'
+  | 'insurance_claims'
+  | 'employment_labour'
+  | 'utilities_power';
+
+export type CaseStage =
+  | 'drafting'
+  | 'evidence_gathering'
+  | 'readiness_check'
+  | 'ready_to_file'
+  | 'filed_externally'
+  | 'escalated';
+
+export interface EvidenceItem {
+  id: string;
+  title: string;
+  category: 'receipt' | 'correspondence' | 'screenshot' | 'agreement' | 'notice' | 'bank_statement';
+  fileName: string;
+  fileSize: string;
+  fileType: string;
+  uploadDate: string;
+  sha256Hash: string;
+  storageRef?: string;
+  rawOcrText?: string;
+  hasBlob?: boolean;
+  ocrExtracted: {
+    dates: string[];
+    amounts: string[];
+    identifiers: string[];
+    parties: string[];
+    summary: string;
+  };
+  flag?: {
+    type: 'inconsistency' | 'duplicate' | 'verified';
+    message: string;
+  };
+  claimMappedTo?: string;
+  verifiedOriginal: boolean;
+}
+
+export interface TimelineEvent {
+  id: string;
+  date: string;
+  title: string;
+  description: string;
+  evidenceId?: string;
+  verifiedByDoc: boolean;
+}
+
+export type CustodyEventType =
+  | 'case_created'
+  | 'case_updated'
+  | 'category_changed'
+  | 'status_changed'
+  | 'evidence_uploaded'
+  | 'evidence_accessed'
+  | 'evidence_downloaded'
+  | 'evidence_removed'
+  | 'evidence_verified'
+  | 'ocr_processed'
+  | 'entity_extracted'
+  | 'claim_mapped'
+  | 'readiness_assessed'
+  | 'complaint_generated'
+  | 'authority_recommended'
+  | 'filing_ref_recorded'
+  | 'submission_recorded'
+  | 'reminder_created'
+  | 'reminder_completed'
+  | 'reminder_deleted'
+  | 'response_received'
+  | 'response_analyzed'
+  | 'escalation_evaluated'
+  | 'followup_letter_generated'
+  | 'dossier_generated'
+  | 'dossier_exported';
+
+export interface CustodyEvent {
+  id: string;
+  caseId: string;
+  evidenceId?: string;
+  eventType: CustodyEventType;
+  action: string;
+  actor: string;
+  timestamp: string;
+  details: string;
+  fileHash?: string;
+}
+
+export interface CaseReminder {
+  id: string;
+  caseId: string;
+  dueDate: string;
+  title: string;
+  description: string;
+  status: 'pending' | 'completed';
+  createdAt: string;
+}
+
+export type ResponseClassification =
+  | 'resolved'
+  | 'partially_resolved'
+  | 'unresolved'
+  | 'requires_human_review';
+
+export interface CaseResponseRecord {
+  id: string;
+  caseId: string;
+  receivedDate: string;
+  respondentName: string;
+  documentName?: string;
+  documentHash?: string;
+  storageRef?: string;
+  responseText: string;
+  aiClassification: ResponseClassification;
+  classificationRationale: string;
+  createdAt: string;
+}
+
+export interface FollowUpLetterDraft {
+  id: string;
+  caseId: string;
+  letterType: 'status_reminder' | 'statutory_escalation';
+  recipientAuthority: string;
+  subject: string;
+  body: string;
+  statutoryBasis: string;
+  generatedAt: string;
+}
+
+export type CitizenReportedStatus =
+  | 'not_submitted'
+  | 'submitted'
+  | 'in_progress'
+  | 'response_received'
+  | 'resolved'
+  | 'unresolved'
+  | 'escalated';
+
+export interface CaseMonitoringData {
+  submissionDate?: string;
+  submissionTime?: string;
+  officialPortal?: string;
+  department?: string;
+  docketNumber?: string;
+  citizenReportedStatus: CitizenReportedStatus;
+  statutoryDeadlineDays: number;
+  statutoryDeadlineDate?: string;
+  reminders: CaseReminder[];
+  responses: CaseResponseRecord[];
+  generatedLetters: FollowUpLetterDraft[];
+  lastEvaluatedAt?: string;
+}
+
+export interface GrievanceCase {
+  id: string;
+  title: string;
+  category: GrievanceCategory;
+  stage: CaseStage;
+  status: 'active' | 'pending_attention' | 'ready' | 'resolved';
+  isSampleData?: boolean;
+  createdAt?: string;
+  lastUpdated: string;
+  incidentDate: string;
+  incidentLocation: string;
+  involvedEntity: string;
+  disputedAmount?: number;
+  currency: string;
+  description: string;
+  simpleSummary: string;
+  readinessScore: number;
+  readinessBreakdown: {
+    evidenceCompleteness: number;
+    timelineClarity: number;
+    identityProof: number;
+    formalNoticeSent: number;
+  };
+  recommendedAuthority: {
+    name: string;
+    portalName: string;
+    portalUrl: string;
+    filingFee: string;
+    averageResolutionTime: string;
+  };
+  trustCheckRecord?: TrustCheckRecord;
+  timeline: TimelineEvent[];
+  evidence: EvidenceItem[];
+  missingElements: string[];
+  complaintDraft: {
+    subject: string;
+    formalBody: string;
+    simpleBody: string;
+    reliefSought: string;
+  };
+  custodyEvents: CustodyEvent[];
+  filingDetails?: {
+    referenceNumber?: string;
+    authority?: string;
+    filingDate?: string;
+    officialAckUrl?: string;
+    notes?: string;
+  };
+  monitoring?: CaseMonitoringData;
+}
+
+export type TrustCheckStatus =
+  | 'Verified adverse match'
+  | 'Suspicious indicator'
+  | 'No matching record found'
+  | 'Unable to verify'
+  | 'Source unavailable';
+
+export interface TrustCheckRecord {
+  id: string;
+  input: string;
+  type: 'upi' | 'phone' | 'bank_account' | 'url' | 'email' | 'screenshot' | 'other';
+  riskLevel: 'high_risk' | 'suspicious' | 'low_risk' | 'verified';
+  resultStatus?: TrustCheckStatus;
+  flagTitle: string;
+  description: string;
+  officialFindings?: string[];
+  governmentAdvisories?: Array<{ title: string; authority: string; url?: string }>;
+  sourceReferences: string[];
+  timestamp: string;
+  lastChecked?: string;
+  recommendedPrecautions?: string[];
+  suggestedNextSteps?: string[];
+  isAiObservation?: boolean;
+  recommendedActions: string[];
+}
+
+export interface AuthorityGuide {
+  id: string;
+  category: GrievanceCategory;
+  authorityName: string;
+  jurisdiction: string;
+  officialPortal: string;
+  portalUrl: string;
+  filingProcedure: string[];
+  eligibility: string[];
+  requiredDocuments: string[];
+  statutoryDeadlines: string;
+  escalationLadder: {
+    level: number;
+    tier: string;
+    timeline: string;
+    description: string;
+  }[];
+}

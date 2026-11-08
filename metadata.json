@@ -1,0 +1,8 @@
+{
+  "name": "NivaranSetu",
+  "description": "AI-Powered Citizen Grievance Intelligence Platform. A bridge from scattered evidence to structured, actionable resolution.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
