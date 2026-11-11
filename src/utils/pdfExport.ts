@@ -12,7 +12,7 @@ export const exportCaseDossierToPDF = (
   });
 
   const citizenMode = options?.mode || 'detailed';
-  const citizenName = options?.citizenName || 'Rajesh Joshi';
+  const citizenName = options?.citizenName?.trim() || 'Citizen Complainant';
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -251,12 +251,20 @@ export const exportCaseDossierToPDF = (
     doc.setFont('courier', 'normal');
     doc.setFontSize(6.8);
     doc.setTextColor(80, 80, 90);
-    doc.text(`${ev.sha256Hash.substring(0, 32)}...`, margin + 115, y + 4);
+    const hashText = ev.sha256Hash
+      ? `${ev.sha256Hash.substring(0, 32)}...`
+      : 'Metadata only';
+    doc.text(hashText, margin + 115, y + 4);
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
-    doc.setTextColor(22, 163, 74); // Emerald Green
-    doc.text('Verified', pageWidth - margin - 2, y + 4, { align: 'right' });
+    if (ev.verifiedOriginal) {
+      doc.setTextColor(22, 163, 74); // Emerald Green
+      doc.text('Verified', pageWidth - margin - 2, y + 4, { align: 'right' });
+    } else {
+      doc.setTextColor(150, 150, 160); // Neutral Gray
+      doc.text('Unverified', pageWidth - margin - 2, y + 4, { align: 'right' });
+    }
 
     doc.setDrawColor(240, 240, 245);
     doc.setLineWidth(0.2);

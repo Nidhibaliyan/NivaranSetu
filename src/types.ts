@@ -1,5 +1,28 @@
+import type {
+  TemporalEvaluationResult,
+  RbiEvaluationResult,
+  CpaEvaluationResult,
+  OffenceAssessmentResult,
+} from './utils/legalAnalysisEngine';
+
+export type {
+  TemporalEvaluationResult,
+  RbiEvaluationResult,
+  CpaEvaluationResult,
+  OffenceAssessmentResult,
+};
+
 export type AppTheme = 'dark' | 'light' | 'system';
 export type AppMode = 'simple' | 'detailed';
+
+export interface AuthUser {
+  id: string; // Authenticated Supabase UUID (auth.uid())
+  name: string;
+  email: string;
+  phone?: string;
+  location?: string;
+  role?: string;
+}
 
 export type LanguageCode =
   | 'en'
@@ -46,9 +69,10 @@ export interface EvidenceItem {
   category: 'receipt' | 'correspondence' | 'screenshot' | 'agreement' | 'notice' | 'bank_statement';
   fileName: string;
   fileSize: string;
+  fileSizeBytes?: number;
   fileType: string;
   uploadDate: string;
-  sha256Hash: string;
+  sha256Hash: string | null;
   storageRef?: string;
   rawOcrText?: string;
   hasBlob?: boolean;
@@ -65,6 +89,7 @@ export interface EvidenceItem {
   };
   claimMappedTo?: string;
   verifiedOriginal: boolean;
+  deletedAt?: string | null;
 }
 
 export interface TimelineEvent {
@@ -72,7 +97,7 @@ export interface TimelineEvent {
   date: string;
   title: string;
   description: string;
-  evidenceId?: string;
+  evidenceId?: string | null;
   verifiedByDoc: boolean;
 }
 
@@ -113,7 +138,7 @@ export interface CustodyEvent {
   actor: string;
   timestamp: string;
   details: string;
-  fileHash?: string;
+  fileHash?: string | null;
 }
 
 export interface CaseReminder {
@@ -220,6 +245,7 @@ export interface GrievanceCase {
     formalBody: string;
     simpleBody: string;
     reliefSought: string;
+    legalAnalysis?: LegalAnalysisResponse | null;
   };
   custodyEvents: CustodyEvent[];
   filingDetails?: {
@@ -230,9 +256,11 @@ export interface GrievanceCase {
     notes?: string;
   };
   monitoring?: CaseMonitoringData;
+  deletedAt?: string | null;
 }
 
 export type TrustCheckStatus =
+  | 'Adverse catalog match'
   | 'Verified adverse match'
   | 'Suspicious indicator'
   | 'No matching record found'
@@ -276,3 +304,53 @@ export interface AuthorityGuide {
     description: string;
   }[];
 }
+
+export interface NavigatorSession {
+  caseId: string;
+  guideId: string;
+  currentStep: number;
+  ackNumber: string;
+  ackFilingDate: string;
+  savedAt?: string;
+}
+
+// =============================================================================
+// STATUTORY LEGAL ANALYSIS TYPES (Batch 2B)
+// Matches server.ts POST /api/gemini/legal-analysis response schema
+// =============================================================================
+
+export interface EvidenceTaxonomySummary {
+  citizenAllegationsCount: number;
+  documentObservationsCount: number;
+  forensicAuditRequiredCount: number;
+}
+
+export interface LegalAnalysisAssessmentMetadata {
+  evaluatedAt: string;
+  isUnsavedDraft: boolean;
+  targetEntity: string;
+  disputedAmount: number;
+  evidenceTaxonomySummary: EvidenceTaxonomySummary;
+}
+
+export interface LegalAnalysisFindings {
+  temporalJurisdiction: TemporalEvaluationResult;
+  rbiCommercialBanksProtection: RbiEvaluationResult;
+  consumerProtectionAct: CpaEvaluationResult;
+  criminalOffencesAssessment: OffenceAssessmentResult;
+  assessmentMetadata: LegalAnalysisAssessmentMetadata;
+}
+
+export interface LegalAnalysisResponse {
+  success: true;
+  isFallback: boolean;
+  modelUsed: string;
+  synthesis: string;
+  findings: LegalAnalysisFindings;
+}
+
+export interface LegalAnalysisErrorResponse {
+  error: string;
+  message: string;
+}
+

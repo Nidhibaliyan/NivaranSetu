@@ -23,12 +23,232 @@ import {
   Sparkles,
   HelpCircle,
   Clock,
-  Shield
+  Shield,
+  ChevronDown
 } from 'lucide-react';
+import { GuidedNavigationHeader } from './GuidedNavigationHeader';
 
 interface TrustCheckProps {
   onNavigateToTab?: (tab: string) => void;
   onContinueToBuilder?: (record: TrustCheckRecord) => void;
+}
+
+// Helper: Badge styling adhering strictly to palette rules with riskLevel enum as source of truth
+export function getTrustCheckBadgeConfig(
+  riskLevel?: TrustCheckRecord['riskLevel'] | string,
+  fallbackStatus?: TrustCheckStatus
+): {
+  text: string;
+  badgeClass: string;
+  dotClass: string;
+  pulseDot: boolean;
+} {
+  let effectiveLevel: TrustCheckRecord['riskLevel'] = 'low_risk';
+
+  if (
+    riskLevel === 'high_risk' ||
+    riskLevel === 'suspicious' ||
+    riskLevel === 'low_risk' ||
+    riskLevel === 'verified'
+  ) {
+    effectiveLevel = riskLevel;
+  } else if (
+    riskLevel === 'Verified adverse match' ||
+    riskLevel === 'Adverse catalog match' ||
+    fallbackStatus === 'Verified adverse match' ||
+    fallbackStatus === 'Adverse catalog match'
+  ) {
+    effectiveLevel = 'high_risk';
+  } else if (riskLevel === 'Suspicious indicator' || fallbackStatus === 'Suspicious indicator') {
+    effectiveLevel = 'suspicious';
+  }
+
+  switch (effectiveLevel) {
+    case 'high_risk':
+      return {
+        text: 'HIGH RISK',
+        badgeClass:
+          'bg-red-100 text-red-700 dark:bg-red-950/70 dark:text-red-400 border border-red-300 dark:border-red-800',
+        dotClass: 'bg-red-500',
+        pulseDot: true,
+      };
+    case 'suspicious':
+      return {
+        text: 'SUSPICIOUS',
+        badgeClass:
+          'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-400 border border-amber-300 dark:border-amber-800',
+        dotClass: 'bg-amber-500',
+        pulseDot: false,
+      };
+    case 'low_risk':
+    case 'verified':
+    default:
+      return {
+        text: 'LOW RISK',
+        badgeClass:
+          'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800',
+        dotClass: 'bg-emerald-500',
+        pulseDot: false,
+      };
+  }
+}
+
+// Helper: Truthful source-verification labeling without unverified government claims
+export function getTrustCheckSourceLabel(record: TrustCheckRecord): {
+  text: string;
+  className: string;
+} {
+  if (record.isAiObservation) {
+    return {
+      text: 'AI Heuristic Observation',
+      className:
+        'text-[10px] font-mono font-semibold text-[#FF2E93] bg-[#FF2E93]/10 px-2 py-0.5 rounded-md border border-[#FF2E93]/20',
+    };
+  }
+
+  if (record.riskLevel === 'low_risk' || record.resultStatus === 'No matching record found') {
+    return {
+      text: 'Curated Catalog Check',
+      className:
+        'text-[10px] font-mono font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800',
+    };
+  }
+
+  return {
+    text: 'Curated Catalog Match',
+    className:
+      'text-[10px] font-mono font-semibold text-[#007FFF] bg-[#007FFF]/10 px-2 py-0.5 rounded-md border border-[#007FFF]/20',
+  };
+}
+
+// Pure evaluator for TrustCheck: categorizes input against curated catalog or truthful heuristic patterns
+export function evaluateTrustCheckInput(
+  rawInput: string,
+  identifierType: TrustCheckRecord['type'] = 'other'
+): TrustCheckRecord {
+  const val = rawInput.trim();
+  const found = SAMPLE_TRUST_CHECK_RECORDS.find(
+    (r) => r.input.toLowerCase() === val.toLowerCase()
+  );
+
+  if (found) {
+    return found;
+  }
+
+  const valLower = val.toLowerCase();
+
+  // High risk heuristic: specific severe attack vectors / fraudulent commands / malware payloads
+  // Note: 'care' has been intentionally removed from high_risk so that customer-care handles are not flagged as high risk.
+  const isAdverse =
+    valLower.includes('refund') ||
+    valLower.includes('urgent') ||
+    valLower.includes('.apk') ||
+    valLower.includes('disconnect');
+
+  // Suspicious heuristic: unverified support/care handles, generic URL schemes, anomalous TLDs
+  // 'care' is included here so customer care handles (e.g. customer-care-support.xyz) evaluate as suspicious.
+  const isSuspicious =
+    valLower.includes('care') ||
+    valLower.includes('help') ||
+    valLower.includes('support') ||
+    valLower.startsWith('http') ||
+    valLower.includes('.xyz') ||
+    valLower.includes('.top');
+
+  const riskLevel: TrustCheckRecord['riskLevel'] = isAdverse
+    ? 'high_risk'
+    : isSuspicious
+    ? 'suspicious'
+    : 'low_risk';
+
+  const status: TrustCheckStatus = isAdverse || isSuspicious
+    ? 'Suspicious indicator'
+    : 'No matching record found';
+
+  const nowFormatted = new Date().toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  return {
+    id: `tc-${Date.now().toString().slice(-4)}`,
+    input: val,
+    type: identifierType,
+    riskLevel,
+    resultStatus: status,
+    flagTitle: isAdverse
+      ? 'Heuristic Pattern Match: High-Risk Deceptive Pattern Detected'
+      : isSuspicious
+      ? 'Suspicious Heuristic Indicator Detected'
+      : 'No Matching Adverse Record Found in Public Warnings',
+    description: isAdverse
+      ? `The identifier "${val}" matches heuristic indicators associated with urgent deception or unverified payload distribution. This observation is generated via algorithmic heuristics and is not a verified police or regulatory record.`
+      : isSuspicious
+      ? `AI heuristic scanner flagged unverified domain registration and non-standard naming patterns for "${val}". This observation is generated via algorithmic heuristics and is not a verified police or regulatory record.`
+      : `No adverse records or public advisories were found matching "${val}". Please note that an absence of records does not confirm the entity is authentic.`,
+    officialFindings: isAdverse
+      ? [
+          'Identified via local heuristic pattern analysis matching high-risk keywords.',
+          'Algorithmic observation only: No confirmed police complaint or regulatory advisory indexed for this specific identifier.',
+        ]
+      : isSuspicious
+      ? [
+          'Identified by heuristic risk scanner matching unverified naming or domain patterns.',
+          'Algorithmic observation only: No confirmed police complaint or regulatory advisory indexed for this specific identifier.',
+        ]
+      : [
+          'No negative match in indexed public consumer advisories.',
+          'Important: Absence of adverse findings does not confirm that this entity is authentic or safe.',
+        ],
+    governmentAdvisories: [
+      {
+        title: 'National Cyber Crime Reporting Portal Citizen Safety Advisory',
+        authority: 'I4C / Ministry of Home Affairs',
+        url: 'https://cybercrime.gov.in',
+      },
+      {
+        title: 'RBI Sachet Public Caution Notice on Fake Customer Care Handles',
+        authority: 'Reserve Bank of India',
+        url: 'https://sachet.rbi.org.in',
+      },
+    ],
+    sourceReferences: isAdverse
+      ? [
+          'Local Heuristic Risk Analysis (High-Risk Keyword Match)',
+          'Public Cybercrime Safety Advisory Reference',
+        ]
+      : isSuspicious
+      ? [
+          'Local Heuristic Pattern Analysis (Suspicious Domain / Handle Indicator)',
+          'Public Cybercrime Safety Advisory Reference',
+        ]
+      : [
+          'Local Pattern Analysis (No Flagged Keywords)',
+          'Public Consumer Advisory Reference',
+        ],
+    timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
+    lastChecked: nowFormatted,
+    isAiObservation: true,
+    recommendedPrecautions: [
+      'NEVER enter your UPI PIN to receive money or refunds',
+      'Do not install remote assistance apps (AnyDesk, TeamViewer, RustDesk)',
+      'Do not open APK or executable attachments from unknown senders',
+    ],
+    suggestedNextSteps: [
+      'If you shared financial details or money was deducted, dial 1930 immediately',
+      'Block communication across phone, SMS, and WhatsApp',
+      'Continue to Smart Case Builder to organize your incident evidence',
+    ],
+    recommendedActions: [
+      'NEVER enter your UPI PIN to receive funds or refunds',
+      'Do not install remote assistance applications',
+      'Report the number/UPI on cybercrime.gov.in or dial 1930 immediately',
+      'Block communication immediately across all messaging apps',
+    ],
+  };
 }
 
 export const TrustCheck: React.FC<TrustCheckProps> = ({
@@ -43,6 +263,7 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
   const [activeResult, setActiveResult] = useState<TrustCheckRecord | null>(SAMPLE_TRUST_CHECK_RECORDS[1]);
   const [isSearching, setIsSearching] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [showNextStepsHelp, setShowNextStepsHelp] = useState(false);
 
   // Perform lookup with verified public advisories and heuristic detection
   const handlePerformCheck = (valToUse?: string) => {
@@ -51,104 +272,8 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
 
     setIsSearching(true);
     setTimeout(() => {
-      const found = SAMPLE_TRUST_CHECK_RECORDS.find(
-        (r) => r.input.toLowerCase() === val.toLowerCase()
-      );
-
-      if (found) {
-        setActiveResult(found);
-      } else {
-        const isAdverse =
-          val.includes('refund') ||
-          val.includes('care') ||
-          val.includes('urgent') ||
-          val.includes('.apk') ||
-          val.includes('disconnect');
-
-        const isSuspicious =
-          val.includes('help') ||
-          val.includes('support') ||
-          val.startsWith('http') ||
-          val.includes('.xyz') ||
-          val.includes('.top');
-
-        const status: TrustCheckStatus = isAdverse
-          ? 'Verified adverse match'
-          : isSuspicious
-          ? 'Suspicious indicator'
-          : 'No matching record found';
-
-        const nowFormatted = new Date().toLocaleString('en-IN', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-
-        const newRecord: TrustCheckRecord = {
-          id: `tc-${Date.now().toString().slice(-4)}`,
-          input: val,
-          type: identifierType,
-          riskLevel: isAdverse ? 'high_risk' : isSuspicious ? 'suspicious' : 'low_risk',
-          resultStatus: status,
-          flagTitle: isAdverse
-            ? 'Adverse Warning Match: Deceptive Pattern in Payment/Communication Identifier'
-            : isSuspicious
-            ? 'Suspicious Heuristic Indicator Detected'
-            : 'No Matching Adverse Record Found in Public Warnings',
-          description: isAdverse
-            ? `The identifier "${val}" matches known social-engineering scripts impersonating bank refunds or utility providers.`
-            : isSuspicious
-            ? `AI heuristic scanner flagged unverified domain registration and non-standard naming patterns.`
-            : `No adverse records or public advisories were found matching "${val}". Please note that an absence of records does not confirm the entity is authentic.`,
-          officialFindings: isAdverse
-            ? [
-                'Attributed to known impersonation pattern reported on cybercrime portal (1930).',
-                'Unverified entity attempting corporate handle spoofing.',
-              ]
-            : isSuspicious
-            ? ['Unaccredited merchant handle with anomalous registration characteristics.']
-            : ['No negative match in indexed public consumer advisories.'],
-          governmentAdvisories: [
-            {
-              title: 'National Cyber Crime Reporting Portal Citizen Safety Advisory',
-              authority: 'I4C / Ministry of Home Affairs',
-              url: 'https://cybercrime.gov.in',
-            },
-            {
-              title: 'RBI Sachet Public Caution Notice on Fake Customer Care Handles',
-              authority: 'Reserve Bank of India',
-              url: 'https://sachet.rbi.org.in',
-            },
-          ],
-          sourceReferences: [
-            'National Cyber Crime Reporting Portal (1930) Heuristic Warning Pattern',
-            'RBI Sachet Public Warning Matrix',
-            'Sanchar Saathi Chakshu Fraud Indicator',
-          ],
-          timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
-          lastChecked: nowFormatted,
-          isAiObservation: !isAdverse,
-          recommendedPrecautions: [
-            'NEVER enter your UPI PIN to receive money or refunds',
-            'Do not install remote assistance apps (AnyDesk, TeamViewer, RustDesk)',
-            'Do not open APK or executable attachments from unknown senders',
-          ],
-          suggestedNextSteps: [
-            'If you shared financial details or money was deducted, dial 1930 immediately',
-            'Block communication across phone, SMS, and WhatsApp',
-            'Continue to Smart Case Builder to organize your incident evidence',
-          ],
-          recommendedActions: [
-            'NEVER enter your UPI PIN to receive funds or refunds',
-            'Do not install remote assistance applications',
-            'Report the number/UPI on cybercrime.gov.in or dial 1930 immediately',
-            'Block communication immediately across all messaging apps',
-          ],
-        };
-        setActiveResult(newRecord);
-      }
+      const result = evaluateTrustCheckInput(val, identifierType);
+      setActiveResult(result);
       setIsSearching(false);
     }, 400);
   };
@@ -171,51 +296,21 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
     setActiveResult(sample);
   };
 
-  // Status badge styling adhering strictly to palette rules
-  const renderStatusBadge = (status?: TrustCheckStatus) => {
-    switch (status) {
-      case 'Verified adverse match':
-        return (
-          <span className="px-3 py-1 rounded-full text-xs font-bold font-mono bg-red-100 text-red-700 dark:bg-red-950/70 dark:text-red-400 border border-red-300 dark:border-red-800 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            Verified adverse match
-          </span>
-        );
-      case 'Suspicious indicator':
-        return (
-          <span className="px-3 py-1 rounded-full text-xs font-bold font-mono bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-400 border border-amber-300 dark:border-amber-800 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-amber-500" />
-            Suspicious indicator
-          </span>
-        );
-      case 'No matching record found':
-        return (
-          <span className="px-3 py-1 rounded-full text-xs font-bold font-mono bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-zinc-400" />
-            No matching record found
-          </span>
-        );
-      case 'Unable to verify':
-        return (
-          <span className="px-3 py-1 rounded-full text-xs font-bold font-mono bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-zinc-400" />
-            Unable to verify
-          </span>
-        );
-      case 'Source unavailable':
-        return (
-          <span className="px-3 py-1 rounded-full text-xs font-bold font-mono bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-zinc-400" />
-            Source unavailable
-          </span>
-        );
-      default:
-        return (
-          <span className="px-3 py-1 rounded-full text-xs font-bold font-mono bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700">
-            Unverified
-          </span>
-        );
-    }
+  // Status badge styling adhering strictly to palette rules with riskLevel enum as source of truth
+  const renderStatusBadge = (riskLevel?: TrustCheckRecord['riskLevel'], status?: TrustCheckStatus) => {
+    const config = getTrustCheckBadgeConfig(riskLevel, status);
+    return (
+      <span
+        data-testid="trustcheck-badge"
+        data-risk-level={riskLevel || 'low_risk'}
+        className={`px-3 py-1 rounded-full text-xs font-bold font-mono border flex items-center gap-1.5 ${config.badgeClass}`}
+      >
+        <span
+          className={`w-2 h-2 rounded-full ${config.dotClass} ${config.pulseDot ? 'animate-pulse' : ''}`}
+        />
+        {config.text}
+      </span>
+    );
   };
 
   const handleContinueToSmartCaseBuilder = () => {
@@ -228,7 +323,22 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
   };
 
   return (
-    <div className="space-y-8 max-w-5xl mx-auto pb-12">
+    <div className="space-y-6 max-w-5xl mx-auto pb-12">
+      {/* Guided Step Navigation Header */}
+      <GuidedNavigationHeader
+        stepNumber={1}
+        totalSteps={7}
+        badgeLabel="Stage 1 · Pre-Screening"
+        stepTitle="Verify & Check Suspicious Identifier"
+        instruction="Check payment handles, telephone numbers, bank accounts, or web links against curated fraud pattern catalogs and public safety indicators before building your case."
+        progressPercent={14}
+        onBack={onNavigateToTab ? () => onNavigateToTab('overview') : undefined}
+        backLabel="Dashboard"
+        onContinue={activeResult ? handleContinueToSmartCaseBuilder : undefined}
+        continueLabel="Continue to Case Builder"
+        onExit={onNavigateToTab ? () => onNavigateToTab('overview') : undefined}
+        exitLabel="Exit to Dashboard"
+      />
       
       {/* Header */}
       <div className="space-y-1">
@@ -239,7 +349,7 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
           TrustCheck
         </h1>
         <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
-          Check suspicious identifiers against accessible public records and official advisories before you proceed.
+          Check suspicious identifiers against curated pattern catalogs and safety indicators before you proceed.
         </p>
       </div>
 
@@ -266,7 +376,7 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
             Suspicious identifier check
           </h2>
           <p className="text-xs text-zinc-500">
-            Verify payment handles, telephone numbers, bank accounts, or web links against verified public advisories.
+            Verify payment handles, telephone numbers, bank accounts, or web links against curated pattern catalogs and public safety indicators.
           </p>
         </div>
 
@@ -343,7 +453,7 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
 
           {/* Quick preset samples */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1 text-xs text-zinc-500">
-            <span className="text-[11px] font-medium text-zinc-400">Try verified samples:</span>
+            <span className="text-[11px] font-medium text-zinc-400">Try illustrative test patterns:</span>
             {SAMPLE_TRUST_CHECK_RECORDS.map((rec) => (
               <button
                 key={rec.id}
@@ -366,15 +476,20 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-zinc-100 dark:border-zinc-800 pb-5">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                {renderStatusBadge(activeResult.resultStatus)}
+                {renderStatusBadge(activeResult.riskLevel, activeResult.resultStatus)}
                 
-                {activeResult.isAiObservation ? (
-                  <span className="text-[10px] font-mono font-semibold text-[#FF2E93] bg-[#FF2E93]/10 px-2 py-0.5 rounded-md border border-[#FF2E93]/20">
-                    AI Heuristic Observation
-                  </span>
-                ) : (
-                  <span className="text-[10px] font-mono font-semibold text-[#007FFF] bg-[#007FFF]/10 px-2 py-0.5 rounded-md border border-[#007FFF]/20">
-                    Official Public Advisory Finding
+                {(() => {
+                  const sourceConfig = getTrustCheckSourceLabel(activeResult);
+                  return (
+                    <span className={sourceConfig.className}>
+                      {sourceConfig.text}
+                    </span>
+                  );
+                })()}
+
+                {!activeResult.isAiObservation && (
+                  <span className="text-[10px] font-mono font-medium text-zinc-600 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800/80 px-2 py-0.5 rounded-md border border-zinc-200 dark:border-zinc-700">
+                    Offline Catalog Reference · Not a live police or government DB lookup
                   </span>
                 )}
               </div>
@@ -407,9 +522,9 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
           {/* 1. Official Findings & Pattern Assessment */}
           <div className="space-y-2.5">
             <div className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider flex items-center justify-between">
-              <span>Official Findings & Pattern Analysis</span>
+              <span>Pattern & Advisory Analysis</span>
               <span className="text-[10px] text-zinc-400 font-normal">
-                {activeResult.isAiObservation ? 'Observed via algorithmic scan' : 'Verified against public warnings'}
+                {activeResult.isAiObservation ? 'Observed via algorithmic scan' : 'Curated catalog pattern reference'}
               </span>
             </div>
 
@@ -434,9 +549,16 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
 
           {/* 2. Government Advisories & Source References */}
           <div className="space-y-2.5">
-            <div className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider">
-              Government Advisories & Source References
+            <div className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider flex items-center justify-between">
+              <span>Public Safety Portals (General Guidance & Awareness)</span>
+              <span className="text-[10px] text-zinc-400 font-normal">
+                General guidance links & catalog references
+              </span>
             </div>
+
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 leading-relaxed">
+              These links provide general guidance and public safety resources. Reference to a public safety portal does not establish that this specific identifier or URL was investigated or blacklisted by the authority.
+            </p>
             
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {activeResult.governmentAdvisories?.map((adv, i) => (
@@ -466,7 +588,7 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
                     <Shield className="w-3.5 h-3.5 text-[#007FFF]" />
                     <span>{ref}</span>
                   </div>
-                  <span className="text-[10px] font-mono text-zinc-400">Indexed</span>
+                  <span className="text-[10px] font-mono text-zinc-400">Reference</span>
                 </div>
               ))}
             </div>
@@ -520,7 +642,7 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
             <Info className="w-4 h-4 text-[#007FFF] shrink-0 mt-0.5" />
             <div>
               <strong className="text-zinc-700 dark:text-zinc-300">Public Advisory Transparency Notice: </strong>
-              TrustCheck references only permitted official government notices, cybercrime bulletins, and verifiable public records. NivaranSetu does not access restricted or classified state intelligence systems. A missing result does not prove an identifier is safe. Always exercise caution.
+              TrustCheck references accessible official government awareness notices, cybercrime bulletins, and curated pattern references. Linked government portals provide general regulatory information and do not confirm that an authority has independently investigated or verified a specific submitted identifier. A missing adverse result does not prove an identifier is authentic or safe. Always exercise caution.
             </div>
           </div>
 
@@ -540,54 +662,72 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
         </div>
       )}
 
-      {/* "What happens next?" Navigation Section adhering to original layout */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#18181B] p-6 sm:p-8 space-y-4 shadow-xs">
-        <h2 className="text-sm font-bold text-zinc-950 dark:text-white">
-          What happens next?
-        </h2>
+      {/* "What happens next?" Progressive Disclosure Section */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#18181B] p-5 sm:p-6 space-y-4 shadow-xs">
+        <button
+          type="button"
+          onClick={() => setShowNextStepsHelp(!showNextStepsHelp)}
+          className="w-full flex items-center justify-between text-left cursor-pointer group"
+        >
+          <div>
+            <h2 className="text-sm font-bold text-zinc-950 dark:text-white group-hover:text-[#007FFF] transition-colors">
+              What happens next after checking?
+            </h2>
+            <p className="text-xs text-zinc-500">
+              {showNextStepsHelp ? 'Hide guided pipeline details' : 'Click to preview the remaining steps to resolution'}
+            </p>
+          </div>
+          <ChevronDown
+            className={`w-5 h-5 text-zinc-400 group-hover:text-[#007FFF] transition-transform duration-200 ${
+              showNextStepsHelp ? 'transform rotate-180' : ''
+            }`}
+          />
+        </button>
 
-        <div className="space-y-2.5">
-          {[
-            {
-              step: '2',
-              tab: 'builder',
-              title: 'Smart Case Builder',
-              desc: 'Turn an incident description into a structured case.',
-            },
-            {
-              step: '3',
-              tab: 'evidence',
-              title: 'Evidence Intelligence',
-              desc: 'Organize files, facts, sources and timeline.',
-            },
-            {
-              step: '4',
-              tab: 'readiness',
-              title: 'Case Readiness',
-              desc: 'See what is present and what is still missing.',
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              onClick={() => onNavigateToTab && onNavigateToTab(item.tab)}
-              className="p-4 rounded-xl border border-zinc-100 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors flex items-center justify-between gap-4 cursor-pointer group"
-            >
-              <div className="flex items-start gap-3">
-                <span className="font-mono text-xs font-bold text-zinc-400 mt-0.5">
-                  {item.step}
-                </span>
-                <div>
-                  <h3 className="text-xs font-bold text-zinc-900 dark:text-white group-hover:text-[#007FFF] transition-colors">
-                    {item.title}
-                  </h3>
-                  <p className="text-xs text-zinc-500">{item.desc}</p>
+        {showNextStepsHelp && (
+          <div className="space-y-2.5 pt-2 border-t border-zinc-100 dark:border-zinc-800 animate-fade-in">
+            {[
+              {
+                step: '2',
+                tab: 'builder',
+                title: 'Smart Case Builder',
+                desc: 'Turn an incident description into a structured case.',
+              },
+              {
+                step: '3',
+                tab: 'evidence',
+                title: 'Evidence Intelligence',
+                desc: 'Organize files, facts, sources and timeline.',
+              },
+              {
+                step: '4',
+                tab: 'readiness',
+                title: 'Case Readiness',
+                desc: 'See what is present and what is still missing.',
+              },
+            ].map((item) => (
+              <div
+                key={item.step}
+                onClick={() => onNavigateToTab && onNavigateToTab(item.tab)}
+                className="p-3.5 rounded-xl border border-zinc-100 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors flex items-center justify-between gap-4 cursor-pointer group bg-zinc-50/50 dark:bg-zinc-900/40"
+              >
+                <div className="flex items-start gap-3">
+                  <span className="font-mono text-xs font-bold text-zinc-400 mt-0.5">
+                    {item.step}
+                  </span>
+                  <div>
+                    <h3 className="text-xs font-bold text-zinc-900 dark:text-white group-hover:text-[#007FFF] transition-colors">
+                      {item.title}
+                    </h3>
+                    <p className="text-xs text-zinc-500">{item.desc}</p>
+                  </div>
                 </div>
-              </div>
 
-              <ChevronRight className="w-4 h-4 text-zinc-400 group-hover:text-[#007FFF] transform group-hover:translate-x-1 transition-all shrink-0" />
-            </div>
-          ))}
-        </div>
+                <ChevronRight className="w-4 h-4 text-zinc-400 group-hover:text-[#007FFF] transform group-hover:translate-x-1 transition-all shrink-0" />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
     </div>

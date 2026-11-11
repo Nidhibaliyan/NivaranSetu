@@ -37,7 +37,7 @@ interface AppLayoutProps {
   setActiveTab: (tab: string) => void;
   onBackToLanding: () => void;
   onLogout: () => void;
-  selectedCase: GrievanceCase;
+  selectedCase?: GrievanceCase | null;
   allCases: GrievanceCase[];
   userName?: string;
   onSelectCaseById: (caseId: string) => void;
@@ -51,7 +51,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
   onLogout,
   selectedCase,
   allCases,
-  userName = 'Rajesh Joshi',
+  userName = 'Citizen User',
   onSelectCaseById,
   children,
 }) => {
@@ -102,7 +102,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#F4F4F5] dark:bg-[#09090B] text-zinc-900 dark:text-zinc-100 flex transition-colors">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/25 to-sky-50/20 dark:from-[#09090B] dark:via-[#09090B] dark:to-[#0f141c] text-zinc-900 dark:text-zinc-100 flex transition-colors">
       
       {/* 1. LEFT SIDEBAR (Faithfully matching image_e650191c.png) */}
       <aside
@@ -464,7 +464,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
         </header>
 
         {/* Content Viewport */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 animate-fade-in">
           {children}
         </main>
 

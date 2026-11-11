@@ -1,5 +1,17 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import React, { useState } from 'react';
 import { Logo } from './Logo';
+import {
+  signInWithSupabase,
+  signUpWithSupabase,
+  resetSupabasePassword,
+  DEMO_CITIZEN_PASSWORD,
+} from '../utils/authSession';
+import { AuthUser } from '../types';
 import {
   ArrowLeft,
   ArrowRight,
@@ -12,12 +24,76 @@ import {
   Phone,
   CheckCircle2,
   Sparkles,
-  AlertCircle
+  AlertCircle,
+  Play,
+  RotateCcw,
+  KeyRound,
+  Check,
+  Loader2,
 } from 'lucide-react';
+
+export interface QuickCitizenProfile {
+  name: string;
+  email: string;
+  location: string;
+  caseSummary: string;
+}
+
+export const QUICK_CITIZENS: QuickCitizenProfile[] = [
+  { name: 'Rajesh Joshi', email: 'rajesh.joshi@example.com', location: 'Pune, Maharashtra', caseSummary: 'UPI Debit Dispute (₹42,500)' },
+  { name: 'Anita Sharma', email: 'anita.sharma@example.com', location: 'Bengaluru, Karnataka', caseSummary: 'Consumer Appliance Defect' },
+];
+
+export interface QuickLoginCallbacks {
+  setErrorMsg: (msg: string | null) => void;
+  setSuccessNotice: (msg: string | null) => void;
+  setIsSubmitting: (submitting: boolean) => void;
+  setFullName: (name: string) => void;
+  setEmail: (email: string) => void;
+  setPassword: (password: string) => void;
+  onSuccess: (userData: AuthUser, rememberMe?: boolean) => void;
+}
+
+/**
+ * Executes demo login for pre-seeded demo citizen accounts.
+ * Strictly calls signInWithSupabase and never attempts registration fallback,
+ * preventing email rate limit exhaustion.
+ */
+export async function executeQuickLogin(
+  citizen: QuickCitizenProfile,
+  callbacks: QuickLoginCallbacks
+): Promise<void> {
+  callbacks.setErrorMsg(null);
+  callbacks.setSuccessNotice(null);
+  callbacks.setIsSubmitting(true);
+  callbacks.setFullName(citizen.name);
+  callbacks.setEmail(citizen.email);
+  callbacks.setPassword(DEMO_CITIZEN_PASSWORD);
+
+  try {
+    const loginRes = await signInWithSupabase(citizen.email, DEMO_CITIZEN_PASSWORD, true);
+    if (loginRes.user) {
+      callbacks.onSuccess(loginRes.user, true);
+      return;
+    }
+
+    callbacks.setErrorMsg(
+      loginRes.error ||
+        'Demo account credentials invalid or user not found. Please ensure this demo user exists in Supabase Auth.'
+    );
+  } catch (err: any) {
+    callbacks.setErrorMsg(err?.message || 'Authentication request failed.');
+  } finally {
+    callbacks.setIsSubmitting(false);
+  }
+}
 
 interface AuthPageProps {
   initialMode?: 'login' | 'register' | 'forgot';
-  onSuccess: (userData: { name: string; email: string }) => void;
+  onSuccess: (
+    userData: AuthUser,
+    rememberMe?: boolean
+  ) => void;
   onBackToHome: () => void;
 }
 
@@ -26,414 +102,391 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   onSuccess,
   onBackToHome,
 }) => {
-  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot' | 'reset-sent'>(
-    initialMode
+  const [tab, setTab] = useState<'login' | 'register'>(
+    initialMode === 'register' ? 'register' : 'login'
   );
 
   // Form states
   const [fullName, setFullName] = useState('Rajesh Joshi');
   const [email, setEmail] = useState('rajesh.joshi@example.com');
   const [phone, setPhone] = useState('9876543210');
-  const [password, setPassword] = useState('••••••••');
-  const [confirmPassword, setConfirmPassword] = useState('••••••••');
+  const [password, setPassword] = useState(DEMO_CITIZEN_PASSWORD);
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
-  const [agreeTerms, setAgreeTerms] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSent, setForgotSent] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Quick Citizen Demo Profiles
+  const quickCitizens = QUICK_CITIZENS;
+
+  const handleQuickLogin = async (citizen: QuickCitizenProfile) => {
+    await executeQuickLogin(citizen, {
+      setErrorMsg,
+      setSuccessNotice,
+      setIsSubmitting,
+      setFullName,
+      setEmail,
+      setPassword,
+      onSuccess,
+    });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    setSuccessNotice(null);
 
-    if (authMode === 'register') {
+    if (tab === 'register') {
       if (!fullName.trim() || !email.trim()) {
         setErrorMsg('Please enter your full name and email address.');
         return;
       }
-      if (password.length < 6) {
-        setErrorMsg('Password must be at least 6 characters.');
+      if (!password || password.length < 6) {
+        setErrorMsg('Password must be at least 6 characters long.');
         return;
       }
-      if (password !== confirmPassword) {
-        setErrorMsg('Passwords do not match.');
-        return;
+
+      setIsSubmitting(true);
+      try {
+        const res = await signUpWithSupabase(
+          email,
+          password,
+          {
+            fullName,
+            phone,
+          },
+          rememberMe
+        );
+
+        if (res.error) {
+          setErrorMsg(res.error);
+        } else if (res.requiresEmailConfirmation) {
+          setSuccessNotice(
+            'Account registration submitted! A confirmation link has been sent to your email. Please verify your email before logging in, or disable "Confirm email" in Supabase Auth Settings.'
+          );
+        } else if (res.user) {
+          onSuccess(res.user, rememberMe);
+        }
+      } catch (err: any) {
+        setErrorMsg(err?.message || 'Registration request failed.');
+      } finally {
+        setIsSubmitting(false);
       }
-      if (!agreeTerms) {
-        setErrorMsg('Please accept the terms and privacy policy.');
-        return;
-      }
-      onSuccess({ name: fullName, email });
-    } else if (authMode === 'login') {
-      if (!email.trim() || !password) {
-        setErrorMsg('Please enter both your email and password.');
-        return;
-      }
-      onSuccess({ name: fullName || 'Citizen User', email });
-    } else if (authMode === 'forgot') {
+    } else {
       if (!email.trim()) {
-        setErrorMsg('Please provide your registered email address.');
+        setErrorMsg('Please enter your email address.');
         return;
       }
-      setAuthMode('reset-sent');
+      if (!password) {
+        setErrorMsg('Please enter your password.');
+        return;
+      }
+
+      setIsSubmitting(true);
+      try {
+        const res = await signInWithSupabase(email, password, rememberMe);
+        if (res.error) {
+          setErrorMsg(res.error);
+        } else if (res.user) {
+          onSuccess(res.user, rememberMe);
+        }
+      } catch (err: any) {
+        setErrorMsg(err?.message || 'Login request failed.');
+      } finally {
+        setIsSubmitting(false);
+      }
+    }
+  };
+
+  const handleForgotSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail.trim()) return;
+    setErrorMsg(null);
+    try {
+      const res = await resetSupabasePassword(forgotEmail);
+      if (res.success) {
+        setForgotSent(true);
+        setTimeout(() => {
+          setForgotOpen(false);
+          setForgotSent(false);
+        }, 4000);
+      } else {
+        setErrorMsg(res.error);
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to send password recovery link.');
     }
   };
 
   return (
-    <div className="min-h-screen w-full flex flex-col lg:flex-row bg-white dark:bg-[#09090B] text-zinc-900 dark:text-zinc-100 transition-colors">
+    <div className="min-h-screen w-full relative flex flex-col justify-between overflow-hidden bg-gradient-to-b from-blue-50/70 via-white to-sky-50/40 dark:from-[#09090B] dark:via-[#0c1220] dark:to-[#09090B] text-zinc-900 dark:text-zinc-100 transition-colors">
       
-      {/* LEFT BRAND PANEL (Matches reference image image_73631c71.png) */}
-      <div className="lg:w-1/2 bg-[#09090B] text-white p-8 sm:p-12 lg:p-16 flex flex-col justify-between relative overflow-hidden border-b lg:border-b-0 lg:border-r border-zinc-800">
+      {/* 1. AMBIENT BLUE/WHITE GLOWS IN BACKGROUND */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[450px] bg-gradient-to-b from-[#007FFF]/15 via-[#007FFF]/5 to-transparent rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-20 -left-20 w-96 h-96 bg-[#007FFF]/10 dark:bg-[#007FFF]/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -top-20 -right-20 w-96 h-96 bg-[#FF2E93]/8 dark:bg-[#FF2E93]/5 rounded-full blur-3xl pointer-events-none" />
+
+      {/* 2. TOP BAR */}
+      <header className="relative z-10 max-w-6xl w-full mx-auto px-6 py-5 flex items-center justify-between">
+        <button
+          onClick={onBackToHome}
+          className="inline-flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white transition-colors cursor-pointer group px-3 py-1.5 rounded-xl hover:bg-white/60 dark:hover:bg-zinc-800/60 border border-transparent hover:border-zinc-200 dark:border-zinc-800"
+        >
+          <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
+          <span>Back to Home</span>
+        </button>
+      </header>
+
+      {/* 3. CENTER CONTENT AREA: MINIMAL CITIZEN-FRIENDLY INTERFACE */}
+      <main className="relative z-10 w-full max-w-md mx-auto px-5 py-4 flex flex-col items-center">
         
-        {/* Subtle decorative glow with Neon Rose accent */}
-        <div className="absolute top-1/3 -left-20 w-80 h-80 bg-[#007FFF]/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-10 right-10 w-64 h-64 bg-[#FF2E93]/10 rounded-full blur-3xl pointer-events-none" />
-
-        {/* Top: Back to home */}
-        <div className="relative z-10 space-y-6">
-          <button
-            onClick={onBackToHome}
-            className="inline-flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-white transition-colors cursor-pointer"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Back to home</span>
-          </button>
-
-          <div className="pt-4">
-            <Logo size="lg" showSubtitle={false} />
-          </div>
-        </div>
-
-        {/* Center: Inspirational Pitch & Visual Graphic */}
-        <div className="relative z-10 my-12 space-y-8 max-w-md">
-          <div className="space-y-3">
-            <div className="text-xs font-semibold tracking-wider text-[#007FFF] uppercase">
-              A Bridge to Resolution
-            </div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white leading-tight">
-              A clearer path starts here.
-            </h1>
-            <p className="text-sm text-zinc-400 leading-relaxed">
-              Create your account and bring your financial concerns and citizen grievances into one organised place.
-            </p>
+        {/* Animated Brand Header */}
+        <div className="text-center mb-6 space-y-2">
+          <div className="inline-block transform hover:scale-105 transition-transform">
+            <Logo size="lg" showSubtitle={false} animated={true} />
           </div>
 
-          {/* Minimalist Graphic from Reference (Glowing circle + Shield + Subtle pink sparkle) */}
-          <div className="relative w-36 h-36 mx-auto lg:mx-0 flex items-center justify-center">
-            <div className="absolute inset-0 rounded-full border border-zinc-800 bg-zinc-950/80 shadow-2xl flex items-center justify-center">
-              <div className="w-20 h-20 rounded-full border border-[#007FFF]/30 bg-[#007FFF]/10 flex items-center justify-center">
-                <Shield className="w-8 h-8 text-[#007FFF]" />
-              </div>
-            </div>
-            {/* Subtle Neon Rose sparkle accent (decorative only) */}
-            <div className="absolute -top-1 -right-1 text-[#FF2E93]">
-              <Sparkles className="w-5 h-5" />
-            </div>
-          </div>
+          <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+            A Bridge to Resolution · Guided Grievance Portal
+          </p>
         </div>
 
-        {/* Bottom Tagline */}
-        <div className="relative z-10 text-xs text-zinc-500 font-medium">
-          Clear guidance. Your decisions. Your control.
-        </div>
-      </div>
-
-      {/* RIGHT AUTH FORM PANEL */}
-      <div className="lg:w-1/2 p-6 sm:p-12 lg:p-16 flex flex-col justify-center max-w-xl mx-auto w-full">
-        
-        <div className="w-full space-y-6">
+        {/* Minimal Auth Card with Glassmorphic Accent */}
+        <div className="w-full rounded-2xl bg-white/90 dark:bg-[#18181B]/90 backdrop-blur-md border border-zinc-200/80 dark:border-zinc-800/80 shadow-xl shadow-blue-500/5 p-6 sm:p-7 space-y-5 transition-all">
           
-          {/* Header */}
-          <div className="space-y-1.5">
-            <div className="text-xs font-bold text-[#007FFF] uppercase tracking-wider">
-              {authMode === 'register' ? 'Get Started' : authMode === 'login' ? 'Welcome Back' : 'Account Recovery'}
-            </div>
-            
-            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-950 dark:text-white">
-              {authMode === 'register'
-                ? 'Create your account'
-                : authMode === 'login'
-                ? 'Sign in to your workspace'
-                : authMode === 'reset-sent'
-                ? 'Check your inbox'
-                : 'Reset your password'}
-            </h2>
-
-            <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
-              {authMode === 'register'
-                ? 'It takes just a moment to get started.'
-                : authMode === 'login'
-                ? 'Access your saved cases, evidence dossiers, and guidance.'
-                : authMode === 'reset-sent'
-                ? 'We sent a recovery link to your email address.'
-                : 'Enter your registered email address to receive recovery instructions.'}
-            </p>
+          {/* Pill Tab Switcher: Sign In vs Create Account */}
+          <div className="grid grid-cols-2 p-1 rounded-xl bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200/60 dark:border-zinc-800/60 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => {
+                setTab('login');
+                setErrorMsg(null);
+              }}
+              className={`py-2 rounded-lg transition-all cursor-pointer text-center ${
+                tab === 'login'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-950 dark:text-white shadow-xs font-bold text-[#007FFF]'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+              }`}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTab('register');
+                setErrorMsg(null);
+              }}
+              className={`py-2 rounded-lg transition-all cursor-pointer text-center ${
+                tab === 'register'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-950 dark:text-white shadow-xs font-bold text-[#007FFF]'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+              }`}
+            >
+              Create Account
+            </button>
           </div>
 
+          {/* Quick Demo Access Pills */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] text-zinc-400 dark:text-zinc-500 font-medium">
+              <span>EXPLORE WITH CITIZEN ACCOUNT:</span>
+              <span className="text-[10px] text-[#007FFF]">One-Click Login</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {quickCitizens.map((c, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => handleQuickLogin(c)}
+                  className="p-2.5 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-blue-50/40 dark:bg-blue-950/20 hover:bg-blue-50 hover:border-blue-300 dark:hover:bg-blue-900/30 text-left transition-all cursor-pointer group disabled:opacity-50"
+                >
+                  <div className="text-xs font-bold text-zinc-900 dark:text-white group-hover:text-[#007FFF] transition-colors truncate">
+                    {c.name}
+                  </div>
+                  <div className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">
+                    {c.location}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="relative flex items-center justify-center">
+            <div className="w-full border-t border-zinc-200 dark:border-zinc-800" />
+            <span className="absolute bg-white dark:bg-[#18181B] px-3 text-[10px] text-zinc-400 uppercase tracking-wider font-mono">
+              Or with credentials
+            </span>
+          </div>
+
+          {/* Error Message */}
           {errorMsg && (
-            <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{errorMsg}</span>
             </div>
           )}
 
-          {authMode === 'reset-sent' ? (
-            <div className="space-y-6 pt-4">
-              <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 space-y-2 text-xs">
-                <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-semibold">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Password Reset Link Dispatched</span>
-                </div>
-                <p className="text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                  A verification message has been simulated for <strong className="text-zinc-900 dark:text-white">{email}</strong>. For this prototype, you can proceed directly.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setAuthMode('login')}
-                className="w-full py-3 px-4 text-xs font-semibold text-white bg-[#007FFF] hover:bg-[#0070e0] rounded-xl transition-all cursor-pointer text-center"
-              >
-                Return to Login
-              </button>
+          {/* Success Notice */}
+          {successNotice && (
+            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400 text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{successNotice}</span>
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              
-              {/* Register: Full Name */}
-              {authMode === 'register' && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-zinc-900 dark:text-white">
-                    Full name
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="Rajesh Joshi"
-                      className="w-full text-xs px-3.5 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF]"
-                      required
-                    />
-                  </div>
-                </div>
-              )}
+          )}
 
-              {/* Email Address */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-zinc-900 dark:text-white">
-                  Email address
+          {/* Main Form */}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            
+            {/* Registration-only fields */}
+            {tab === 'register' && (
+              <div>
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block mb-1">
+                  Full Name
                 </label>
                 <div className="relative">
+                  <User className="w-3.5 h-3.5 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@example.com"
-                    className="w-full text-xs px-3.5 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF]"
-                    required
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Enter your name"
+                    className="w-full text-xs pl-9 pr-3.5 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF] transition-colors"
                   />
                 </div>
               </div>
+            )}
 
-              {/* Register: Optional Mobile Number */}
-              {authMode === 'register' && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-zinc-900 dark:text-white">
-                      Mobile number
-                    </label>
-                    <span className="text-[10px] text-zinc-400">Optional (for SMS alerts)</span>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type="tel"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="9876543210"
-                      className="w-full text-xs px-3.5 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF]"
-                    />
-                  </div>
-                </div>
-              )}
+            {/* Email Field */}
+            <div>
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block mb-1">
+                Email Address
+              </label>
+              <div className="relative">
+                <Mail className="w-3.5 h-3.5 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  className="w-full text-xs pl-9 pr-3.5 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF] transition-colors"
+                />
+              </div>
+            </div>
 
-              {/* Password */}
-              {authMode !== 'forgot' && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-zinc-900 dark:text-white">
-                      Password
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="text-[11px] font-medium text-[#007FFF] hover:underline"
-                    >
-                      {showPassword ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full text-xs px-3.5 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF]"
-                      required
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Register: Confirm Password */}
-              {authMode === 'register' && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-zinc-900 dark:text-white">
-                      Confirm password
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                      className="text-[11px] font-medium text-[#007FFF] hover:underline"
-                    >
-                      {showConfirmPassword ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showConfirmPassword ? 'text' : 'password'}
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full text-xs px-3.5 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF]"
-                      required
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Login Extra Options: Remember me & Forgot Password */}
-              {authMode === 'login' && (
-                <div className="flex items-center justify-between text-xs pt-1">
-                  <label className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={(e) => setRememberMe(e.target.checked)}
-                      className="rounded border-zinc-300 text-[#007FFF] focus:ring-[#007FFF]"
-                    />
-                    <span>Remember me</span>
-                  </label>
-
+            {/* Password Field */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                  Password
+                </label>
+                {tab === 'login' && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setErrorMsg(null);
-                      setAuthMode('forgot');
-                    }}
-                    className="text-xs text-[#007FFF] font-medium hover:underline cursor-pointer"
+                    onClick={() => setForgotOpen(!forgotOpen)}
+                    className="text-[11px] text-[#007FFF] hover:underline cursor-pointer"
                   >
                     Forgot password?
                   </button>
+                )}
+              </div>
+              <div className="relative">
+                <Lock className="w-3.5 h-3.5 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full text-xs pl-9 pr-9 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF] transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer p-0.5"
+                >
+                  {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Progressive Disclosure: Inline Forgot Password */}
+            {forgotOpen && (
+              <div className="p-3.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/50 space-y-2 text-xs">
+                <span className="font-semibold text-zinc-900 dark:text-white block text-[11px]">
+                  Password Recovery:
+                </span>
+                <p className="text-[11px] text-zinc-500">
+                  Enter your email to receive a secure login link.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="Enter registered email"
+                    className="flex-1 text-xs px-2.5 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleForgotSubmit}
+                    className="px-3 py-1.5 text-xs font-semibold text-white bg-[#007FFF] hover:bg-[#0070e0] rounded-lg cursor-pointer"
+                  >
+                    {forgotSent ? 'Sent!' : 'Send Link'}
+                  </button>
                 </div>
+              </div>
+            )}
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-white bg-[#007FFF] hover:bg-[#0070e0] transition-all shadow-md shadow-blue-500/20 cursor-pointer flex items-center justify-center gap-2 group mt-2 disabled:opacity-50"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Authenticating...</span>
+                </>
+              ) : (
+                <>
+                  <span>{tab === 'login' ? 'Enter NivaranSetu' : 'Complete Registration'}</span>
+                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </>
               )}
+            </button>
+          </form>
 
-              {/* Register Terms acceptance */}
-              {authMode === 'register' && (
-                <div className="pt-1">
-                  <label className="flex items-start gap-2 text-xs text-zinc-600 dark:text-zinc-400 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={agreeTerms}
-                      onChange={(e) => setAgreeTerms(e.target.checked)}
-                      className="mt-0.5 rounded border-zinc-300 text-[#007FFF] focus:ring-[#007FFF]"
-                    />
-                    <span className="leading-tight">
-                      I agree to the Terms of Service and understand NivaranSetu provides informational assistance, not legal representation.
-                    </span>
-                  </label>
-                </div>
-              )}
-
-              {/* Submit Button */}
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  className="w-full flex items-center justify-center gap-2 py-3 px-4 text-xs font-semibold text-white bg-[#007FFF] hover:bg-[#0070e0] rounded-xl transition-all shadow-sm shadow-[#007FFF]/25 hover:translate-y-[-1px] cursor-pointer"
-                >
-                  <span>
-                    {authMode === 'register'
-                      ? 'Create account'
-                      : authMode === 'login'
-                      ? 'Sign in'
-                      : 'Send recovery link'}
-                  </span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
-
-            </form>
-          )}
-
-          {/* Switcher links */}
-          <div className="text-center text-xs text-zinc-500 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-            {authMode === 'login' && (
-              <div>
-                Don't have an account?{' '}
-                <button
-                  onClick={() => {
-                    setErrorMsg(null);
-                    setAuthMode('register');
-                  }}
-                  className="text-[#007FFF] font-semibold hover:underline cursor-pointer"
-                >
-                  Create account
-                </button>
-              </div>
-            )}
-
-            {authMode === 'register' && (
-              <div>
-                Already have an account?{' '}
-                <button
-                  onClick={() => {
-                    setErrorMsg(null);
-                    setAuthMode('login');
-                  }}
-                  className="text-[#007FFF] font-semibold hover:underline cursor-pointer"
-                >
-                  Log in
-                </button>
-              </div>
-            )}
-
-            {authMode === 'forgot' && (
-              <div>
-                Remember your password?{' '}
-                <button
-                  onClick={() => {
-                    setErrorMsg(null);
-                    setAuthMode('login');
-                  }}
-                  className="text-[#007FFF] font-semibold hover:underline cursor-pointer"
-                >
-                  Back to login
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Prototype Disclosure Badge */}
-          <div className="flex items-center justify-center gap-2 text-[11px] text-zinc-400 pt-2">
-            <Lock className="w-3.5 h-3.5 text-zinc-400" />
-            <span>Prototype only — authentication is not connected to a secure backend yet.</span>
+          {/* Privacy & Progressive Disclosure Note */}
+          <div className="pt-3 border-t border-zinc-100 dark:border-zinc-800 text-center">
+            <details className="group cursor-pointer">
+              <summary className="text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 flex items-center justify-center gap-1 list-none">
+                <Shield className="w-3 h-3 text-[#007FFF]" />
+                <span>Citizen Privacy & Local Storage Assurance</span>
+              </summary>
+              <p className="mt-2 text-[10px] text-zinc-500 dark:text-zinc-400 leading-relaxed text-left bg-zinc-50 dark:bg-zinc-900/50 p-3 rounded-xl border border-zinc-100 dark:border-zinc-800">
+                Your grievance evidence, personal identifiers, and complaints are secured on your browser device with cryptographic SHA-256 digests. NivaranSetu does not sell or share citizen data with advertisers.
+              </p>
+            </details>
           </div>
 
         </div>
 
-      </div>
+        {/* Bottom Tagline */}
+        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 text-center mt-6">
+          Clear guidance. Your decisions. Your control.
+        </p>
+      </main>
 
+      {/* 4. FOOTER */}
+      <footer className="relative z-10 py-4 text-center text-[10px] text-zinc-400">
+        NivaranSetu Citizen Grievance Intelligence Platform · Free Public Utility
+      </footer>
     </div>
   );
 };

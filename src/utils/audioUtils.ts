@@ -1,6 +1,6 @@
 /**
- * Audio processing utilities for Gemini Live API (gemini-2.0-flash-exp)
- * and audio transcription (gemini-2.0-flash).
+ * Audio processing utilities for Gemini Live API (gemini-live-2.5-flash-preview)
+ * and audio transcription (gemini-3.5-transcribe / gemini-3.8-flash).
  */
 
 // Converts Float32Array from AudioContext to 16-bit PCM ArrayBuffer

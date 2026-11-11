@@ -388,7 +388,7 @@ ${item.ocrExtracted.summary}`;
 
                   {/* Integrity tag */}
                   <div className="mt-2.5 pt-2 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between text-[10px] text-zinc-400 font-mono">
-                    <span>Hash: {ev.sha256Hash.slice(0, 10)}...</span>
+                    <span>Hash: {ev.sha256Hash ? ev.sha256Hash.slice(0, 10) + '...' : 'Metadata'}</span>
                     <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" />
                       <span>OCR Processed</span>
@@ -600,7 +600,7 @@ ${item.ocrExtracted.summary}`;
                               <div className="space-y-1 text-[8.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                                 <div>Summary: {selectedEvidence.ocrExtracted.summary}</div>
                                 <div className="font-mono text-[7.5px] break-all pt-1 border-t border-zinc-100 dark:border-zinc-800">
-                                  DIGITAL SIGNATURE: SHA-256:{selectedEvidence.sha256Hash.slice(0, 32)}...
+                                  DIGITAL SIGNATURE: {selectedEvidence.sha256Hash ? `SHA-256:${selectedEvidence.sha256Hash.slice(0, 32)}...` : 'Metadata only (Unverified exhibit)'}
                                 </div>
                               </div>
                             </div>

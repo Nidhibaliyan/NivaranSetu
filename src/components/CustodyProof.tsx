@@ -118,7 +118,7 @@ export const CustodyProof: React.FC<CustodyProofProps> = ({ currentCase }) => {
                   </div>
 
                   <div className="mt-2.5 pt-2 border-t border-zinc-100 dark:border-zinc-800 text-[10px] font-mono text-zinc-400">
-                    SHA-256: {item.sha256Hash.substring(0, 16)}...
+                    SHA-256: {item.sha256Hash ? item.sha256Hash.substring(0, 16) + '...' : 'Metadata only'}
                   </div>
                 </div>
               );
@@ -157,14 +157,15 @@ export const CustodyProof: React.FC<CustodyProofProps> = ({ currentCase }) => {
                 </label>
                 <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-between gap-3">
                   <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200 break-all select-all">
-                    {selectedItem.sha256Hash}
+                    {selectedItem.sha256Hash || 'Metadata only (Synthetic scenario / No physical file uploaded)'}
                   </span>
                   <button
-                    onClick={() => handleCopyHash(selectedItem.sha256Hash)}
-                    className="p-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:text-zinc-900 dark:hover:text-white shrink-0"
-                    title="Copy hash"
+                    disabled={!selectedItem.sha256Hash}
+                    onClick={() => selectedItem.sha256Hash && handleCopyHash(selectedItem.sha256Hash)}
+                    className="p-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:text-zinc-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+                    title={selectedItem.sha256Hash ? "Copy hash" : "No hash recorded"}
                   >
-                    {copiedHash === selectedItem.sha256Hash ? (
+                    {copiedHash === selectedItem.sha256Hash && selectedItem.sha256Hash ? (
                       <Check className="w-3.5 h-3.5 text-emerald-500" />
                     ) : (
                       <Copy className="w-3.5 h-3.5" />

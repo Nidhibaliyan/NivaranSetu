@@ -15,9 +15,12 @@ import {
 import { useLanguage } from '../context/LanguageContext';
 import {
   calculateSha256,
-  storeEvidenceBlob,
   createCustodyEvent,
 } from '../utils/caseStorage';
+import {
+  uploadEvidenceBlob,
+  downloadEvidenceBlob,
+} from '../utils/evidenceStorage';
 import {
   evaluateEscalationStatus,
   detectPendingActions,
@@ -50,10 +53,16 @@ import {
   Download,
   Info
 } from 'lucide-react';
+import { GuidedNavigationHeader } from './GuidedNavigationHeader';
+import {
+  CHAT_CLIENT_TIMEOUT_MS,
+  fetchWithTimeout,
+  formatAiErrorMessage,
+} from '../utils/aiClientUtils';
 
 interface SmartCaseMonitoringProps {
   currentCase: GrievanceCase;
-  onUpdateCase: (updated: GrievanceCase) => void;
+  onUpdateCase: (updated: GrievanceCase) => Promise<boolean | void> | void;
   onBackToCases: () => void;
   onOpenDossier: () => void;
   onOpenNavigator?: () => void;
@@ -110,6 +119,13 @@ export const SmartCaseMonitoring: React.FC<SmartCaseMonitoringProps> = ({
   const [responseText, setResponseText] = useState('');
   const [responseFile, setResponseFile] = useState<File | null>(null);
   const [isAnalyzingResponse, setIsAnalyzingResponse] = useState(false);
+  const [uploadedAttachment, setUploadedAttachment] = useState<{
+    storageRef: string;
+    fileHash: string;
+    fileName: string;
+  } | null>(null);
+  const [responseSaveError, setResponseSaveError] = useState<string | null>(null);
+  const [downloadingResponseId, setDownloadingResponseId] = useState<string | null>(null);
 
   // State for Letter Generator
   const [selectedLetterType, setSelectedLetterType] = useState<'status_reminder' | 'statutory_escalation'>('status_reminder');
@@ -251,33 +267,83 @@ export const SmartCaseMonitoring: React.FC<SmartCaseMonitoringProps> = ({
     });
   };
 
+  // Handle download of official response attachment from private Supabase Storage
+  const handleDownloadResponseAttachment = async (resp: CaseResponseRecord) => {
+    if (!resp.storageRef) {
+      alert('This response record was created locally and does not have a private cloud storage reference.');
+      return;
+    }
+    setDownloadingResponseId(resp.id);
+    try {
+      const blob = await downloadEvidenceBlob(resp.storageRef);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = resp.documentName || `response_${resp.id}.bin`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error('Failed to download response document:', err);
+      alert(`Could not download response document: ${err?.message || 'Storage download error'}`);
+    } finally {
+      setDownloadingResponseId(null);
+    }
+  };
+
   // Handle response document/text upload and AI analysis
   const handleRecordResponse = async () => {
-    if (!responseText.trim() && !responseFile) {
+    if (!responseText.trim() && !responseFile && !uploadedAttachment) {
       alert('Please provide response text or select a response document file.');
       return;
     }
 
+    if (!currentCase.id || !currentCase.id.trim()) {
+      alert('Cannot attach response: no active parent case ID found.');
+      return;
+    }
+
     setIsAnalyzingResponse(true);
+    setResponseSaveError(null);
+
+    let currentUpload = uploadedAttachment;
+    const respId = `resp-${Date.now()}`;
+
+    // 1. Upload attachment to private Supabase Storage 'evidence' bucket if not already uploaded
+    // Storage path strictly follows 4-segment schema: {userId}/{caseId}/{responseId}/{fileName}
+    if (responseFile && !currentUpload) {
+      try {
+        const uploadRes = await uploadEvidenceBlob({
+          caseId: currentCase.id,
+          evidenceId: respId,
+          file: responseFile,
+          fileName: responseFile.name,
+        });
+        currentUpload = {
+          storageRef: uploadRes.storageRef,
+          fileHash: uploadRes.sha256Hash,
+          fileName: responseFile.name,
+        };
+        setUploadedAttachment(currentUpload);
+      } catch (uploadErr: any) {
+        console.error('Storage upload failed:', uploadErr);
+        setIsAnalyzingResponse(false);
+        setResponseSaveError(`Failed to upload attachment to private cloud storage: ${uploadErr?.message || 'Upload error'}`);
+        return; // Abort before attempting any metadata save
+      }
+    }
+
+    // 2. Classify response with AI service or rule-based parser
+    let classification: ResponseClassification = 'requires_human_review';
+    let rationale = '';
+    const activeFileName = currentUpload?.fileName || '';
+
+    let isRuleBasedFallback = false;
 
     try {
-      let fileHash = '';
-      let fileName = '';
-
-      if (responseFile) {
-        fileHash = await calculateSha256(responseFile);
-        fileName = responseFile.name;
-        const storageKey = `resp_${currentCase.id}_${Date.now()}`;
-        await storeEvidenceBlob(currentCase.id, storageKey, responseFile);
-      }
-
-      // Analyze response with AI service or rule-based parser
-      let classification: ResponseClassification = 'requires_human_review';
-      let rationale = '';
-
-      try {
-        const prompt = `Analyze this official government or institutional grievance response:
-Response Text: "${responseText || 'Document attached: ' + fileName}"
+      const prompt = `Analyze this official government or institutional grievance response:
+Response Text: "${(responseText || 'Document attached: ' + activeFileName).slice(0, 7500)}"
 Involved Respondent: "${respondentName}"
 Original Grievance: "${currentCase.title}"
 
@@ -291,86 +357,107 @@ Return your analysis in this exact format:
 CLASSIFICATION: [resolved | partially_resolved | unresolved | requires_human_review]
 RATIONALE: [2-3 sentences explaining the legal and factual basis for this classification]`;
 
-        const aiRes = await fetch('/api/gemini/chat', {
+      const aiRes = await fetchWithTimeout(
+        '/api/gemini/chat',
+        {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             messages: [{ role: 'user', text: prompt }],
             taskType: 'complex',
-            requestedModel: 'gemini-1.5-pro',
+            requestedModel: 'gemini-4-argon',
           }),
-        });
-
-        if (aiRes.ok) {
-          const aiData = await aiRes.json();
-          const aiOutput = aiData.text || '';
-          if (aiOutput.includes('CLASSIFICATION: resolved')) classification = 'resolved';
-          else if (aiOutput.includes('CLASSIFICATION: partially_resolved')) classification = 'partially_resolved';
-          else if (aiOutput.includes('CLASSIFICATION: unresolved')) classification = 'unresolved';
-          else classification = 'requires_human_review';
-
-          const rationaleMatch = aiOutput.match(/RATIONALE:\s*([\s\S]+)/i);
-          rationale = rationaleMatch ? rationaleMatch[1].trim() : aiOutput.trim();
-        } else {
-          throw new Error('AI service returned non-200');
-        }
-      } catch (aiErr) {
-        // Fallback rule-based analysis
-        const lower = (responseText + ' ' + fileName).toLowerCase();
-        if (lower.includes('reject') || lower.includes('repudiat') || lower.includes('dismiss') || lower.includes('closed without')) {
-          classification = 'unresolved';
-          rationale = 'Rule-based analysis: Response contains explicit repudiation or closure without relief terms. Grounds for statutory escalation.';
-        } else if (lower.includes('refund processed') || lower.includes('resolved') || lower.includes('credit reversed') || lower.includes('admitted')) {
-          classification = 'resolved';
-          rationale = 'Rule-based analysis: Response indicates full grievance admission and corrective resolution executed.';
-        } else if (lower.includes('partial') || lower.includes('transferred') || lower.includes('forwarded')) {
-          classification = 'partially_resolved';
-          rationale = 'Rule-based analysis: Matter has been forwarded or granted partial relief.';
-        } else {
-          classification = 'requires_human_review';
-          rationale = 'The text provided requires human review by the citizen to confirm whether the terms meet statutory relief requirements.';
-        }
-      }
-
-      const newResponseRecord: CaseResponseRecord = {
-        id: `resp-${Date.now()}`,
-        caseId: currentCase.id,
-        receivedDate: responseDate,
-        respondentName: respondentName.trim(),
-        documentName: fileName || undefined,
-        documentHash: fileHash || undefined,
-        responseText: responseText.trim(),
-        aiClassification: classification,
-        classificationRationale: rationale,
-        createdAt: new Date().toISOString(),
-      };
-
-      const respCustodyEvent = createCustodyEvent(
-        currentCase.id,
-        'response_received',
-        `Official Response Received from ${newResponseRecord.respondentName}`,
-        'Citizen (Browser Session)',
-        `Classification: ${classification.toUpperCase()}. Date: ${responseDate}. ${fileHash ? 'SHA-256: ' + fileHash : 'Text response recorded.'}`
+        },
+        CHAT_CLIENT_TIMEOUT_MS
       );
 
-      const updatedCase: GrievanceCase = {
-        ...currentCase,
-        lastUpdated: new Date().toISOString(),
-        monitoring: {
-          ...monitoring,
-          citizenReportedStatus: 'response_received',
-          responses: [...(monitoring.responses || []), newResponseRecord],
-        },
-        custodyEvents: [...(currentCase.custodyEvents || []), respCustodyEvent],
-      };
+      if (aiRes.ok) {
+        const aiData = await aiRes.json();
+        const aiOutput = aiData.text || '';
+        if (aiOutput.includes('CLASSIFICATION: resolved')) classification = 'resolved';
+        else if (aiOutput.includes('CLASSIFICATION: partially_resolved')) classification = 'partially_resolved';
+        else if (aiOutput.includes('CLASSIFICATION: unresolved')) classification = 'unresolved';
+        else classification = 'requires_human_review';
 
-      onUpdateCase(updatedCase);
+        const rationaleMatch = aiOutput.match(/RATIONALE:\s*([\s\S]+)/i);
+        rationale = rationaleMatch ? rationaleMatch[1].trim() : aiOutput.trim();
+      } else {
+        const errJson = await aiRes.json().catch(() => ({}));
+        throw new Error(errJson.error || `AI service returned HTTP ${aiRes.status}`);
+      }
+    } catch (aiErr: any) {
+      isRuleBasedFallback = true;
+      const formattedReason = formatAiErrorMessage(aiErr, aiErr?.message || 'AI request failed');
+      const reason = ` (${formattedReason})`;
+      // Fallback rule-based analysis with explicit disclosure
+      const lower = (responseText + ' ' + activeFileName).toLowerCase();
+      if (lower.includes('reject') || lower.includes('repudiat') || lower.includes('dismiss') || lower.includes('closed without')) {
+        classification = 'unresolved';
+        rationale = `Rule-based fallback [AI Unavailable${reason}]: Response contains explicit repudiation or closure without relief terms. Grounds for statutory escalation.`;
+      } else if (lower.includes('refund processed') || lower.includes('resolved') || lower.includes('credit reversed') || lower.includes('admitted')) {
+        classification = 'resolved';
+        rationale = `Rule-based fallback [AI Unavailable${reason}]: Response indicates full grievance admission and corrective resolution executed.`;
+      } else if (lower.includes('partial') || lower.includes('transferred') || lower.includes('forwarded')) {
+        classification = 'partially_resolved';
+        rationale = `Rule-based fallback [AI Unavailable${reason}]: Matter has been forwarded or granted partial relief.`;
+      } else {
+        classification = 'requires_human_review';
+        rationale = `Rule-based fallback [AI Unavailable${reason}]: The text provided requires human review by the citizen to confirm whether the terms meet statutory relief requirements.`;
+      }
+    }
+
+    const newResponseRecord: CaseResponseRecord = {
+      id: respId,
+      caseId: currentCase.id,
+      receivedDate: responseDate,
+      respondentName: respondentName.trim(),
+      documentName: currentUpload?.fileName || undefined,
+      documentHash: currentUpload?.fileHash || undefined,
+      storageRef: currentUpload?.storageRef || undefined,
+      responseText: responseText.trim(),
+      aiClassification: classification,
+      classificationRationale: rationale,
+      createdAt: new Date().toISOString(),
+    };
+
+    const respCustodyEvent = createCustodyEvent(
+      currentCase.id,
+      'response_received',
+      `Official Response Received from ${newResponseRecord.respondentName}`,
+      'Citizen (Browser Session)',
+      `Classification: ${classification.toUpperCase()} (${isRuleBasedFallback ? 'Rule-Based Fallback' : 'AI-Evaluated'}). Date: ${responseDate}. ${currentUpload?.fileHash ? 'SHA-256: ' + currentUpload.fileHash : 'Text response recorded.'}`
+    );
+
+    const updatedCase: GrievanceCase = {
+      ...currentCase,
+      lastUpdated: new Date().toISOString(),
+      monitoring: {
+        ...monitoring,
+        citizenReportedStatus: 'response_received',
+        responses: [...(monitoring.responses || []), newResponseRecord],
+      },
+      custodyEvents: [...(currentCase.custodyEvents || []), respCustodyEvent],
+    };
+
+    // 3. Persist metadata via onUpdateCase. If database save fails, retain upload reference for safe retry.
+    try {
+      const saveRes = await onUpdateCase(updatedCase);
+      if (saveRes === false) {
+        throw new Error('Database refused monitoring record update.');
+      }
+      // Success: reset form and attachment state, close modal
+      setUploadedAttachment(null);
       setResponseText('');
       setResponseFile(null);
+      setResponseSaveError(null);
       setShowAddResponseModal(false);
-    } catch (err) {
-      console.error('Error saving response record:', err);
-      alert('Could not save response. Please try again.');
+    } catch (err: any) {
+      console.error('Error saving response record metadata:', err);
+      // DO NOT delete uploaded storage object (Storage deletion forbidden by policy).
+      // Keep uploadedAttachment in state so the citizen can retry saving metadata without re-uploading binary.
+      setResponseSaveError(
+        `Document uploaded to cloud (${currentUpload?.fileName}), but database save failed: ${err?.message || 'Database error'}. Click "Save & Run AI Audit" to retry saving without re-uploading.`
+      );
     } finally {
       setIsAnalyzingResponse(false);
     }
@@ -449,6 +536,20 @@ RATIONALE: [2-3 sentences explaining the legal and factual basis for this classi
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
       
+      {/* 0. GUIDED NAVIGATION HEADER */}
+      <GuidedNavigationHeader
+        badgeLabel={`CASE ${currentCase.id}`}
+        stepTitle="Stage 6: Post-Submission Case Monitoring & Escalation"
+        instruction="Track official response deadlines, maintain in-app follow-up reminders, record entity replies, and evaluate statutory escalation rights."
+        progressPercent={85}
+        onBack={onBackToCases}
+        backLabel="My Cases"
+        onContinue={onOpenDossier}
+        continueLabel="View Case Dossier"
+        onExit={onOpenNavigator}
+        exitLabel={onOpenNavigator ? 'Resolution Navigator' : undefined}
+      />
+
       {/* 1. TOP BREADCRUMB & HEADER */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-5">
         <div>
@@ -506,11 +607,11 @@ RATIONALE: [2-3 sentences explaining the legal and factual basis for this classi
           <div className="font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
             <span>Citizen-Reported Status (Pending Official Verification)</span>
             <span className="text-[10px] font-mono px-2 py-0.2 rounded bg-blue-100 dark:bg-blue-900/60 text-[#007FFF]">
-              Local Browser Storage · SHA-256 Verified
+              Cloud Custody Ledger · SHA-256 Verified
             </span>
           </div>
           <p className="text-zinc-600 dark:text-zinc-400 leading-relaxed text-[11px]">
-            NivaranSetu does not have direct write-access to government grievance databases. All submission dates, docket numbers, and status updates are citizen-recorded and cryptographically hashed in your local browser store (IndexedDB). Official updates must be tracked on the respective department portal.
+            NivaranSetu does not have direct write-access to government grievance databases. All submission dates, docket numbers, and status updates are citizen-recorded and cryptographically preserved in your cloud custody ledger. Official updates must be tracked on the respective department portal.
           </p>
         </div>
       </div>
@@ -1044,6 +1145,11 @@ RATIONALE: [2-3 sentences explaining the legal and factual basis for this classi
                         <span className="text-[11px] text-zinc-500 font-mono">
                           Received: {resp.receivedDate}
                         </span>
+                        {resp.classificationRationale?.toLowerCase().includes('rule-based') && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                            RULE-BASED
+                          </span>
+                        )}
                         <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold border ${badgeColor}`}>
                           {resp.aiClassification.toUpperCase().replace(/_/g, ' ')}
                         </span>
@@ -1057,26 +1163,64 @@ RATIONALE: [2-3 sentences explaining the legal and factual basis for this classi
 
                     {/* Document & Hash */}
                     {resp.documentName && (
-                      <div className="flex items-center gap-3 text-xs text-zinc-500 font-mono">
-                        <span className="font-semibold text-zinc-700 dark:text-zinc-300">File: {resp.documentName}</span>
-                        {resp.documentHash && (
-                          <span className="text-[10px] text-zinc-400">
-                            SHA-256: {resp.documentHash.slice(0, 16)}...
+                      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800 text-xs font-mono">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <FileText className="w-3.5 h-3.5 text-[#007FFF]" />
+                          <span className="font-semibold text-zinc-800 dark:text-zinc-200">{resp.documentName}</span>
+                          {resp.documentHash && (
+                            <span className="text-[10px] text-zinc-400">
+                              (SHA-256: {resp.documentHash.slice(0, 16)}...)
+                            </span>
+                          )}
+                        </div>
+                        {resp.storageRef ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadResponseAttachment(resp)}
+                            disabled={downloadingResponseId === resp.id}
+                            className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-[#007FFF] border border-blue-200 dark:border-blue-900/40 transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>{downloadingResponseId === resp.id ? 'Downloading...' : 'Download File'}</span>
+                          </button>
+                        ) : (
+                          <span className="text-[10px] text-zinc-400 italic">
+                            (Local legacy record · No cloud copy)
                           </span>
                         )}
                       </div>
                     )}
 
-                    {/* AI Classification Basis */}
-                    <div className="p-3.5 rounded-xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30 text-xs space-y-1">
-                      <div className="flex items-center gap-1.5 text-[#007FFF] font-bold text-[11px]">
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>AI Classification Rationale:</span>
-                      </div>
-                      <p className="text-zinc-700 dark:text-zinc-300 text-xs leading-relaxed">
-                        {resp.classificationRationale}
-                      </p>
-                    </div>
+                    {/* Classification Basis */}
+                    {(() => {
+                      const isRule = resp.classificationRationale?.toLowerCase().includes('rule-based');
+                      return (
+                        <div className={`p-3.5 rounded-xl border text-xs space-y-1 ${
+                          isRule
+                            ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/30'
+                            : 'bg-blue-50/50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/30'
+                        }`}>
+                          <div className={`flex items-center gap-1.5 font-bold text-[11px] ${
+                            isRule ? 'text-amber-700 dark:text-amber-400' : 'text-[#007FFF]'
+                          }`}>
+                            {isRule ? (
+                              <>
+                                <Shield className="w-3.5 h-3.5" />
+                                <span>Statutory Rule-Based Fallback Rationale (AI Offline):</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3.5 h-3.5" />
+                                <span>AI Classification Rationale:</span>
+                              </>
+                            )}
+                          </div>
+                          <p className="text-zinc-700 dark:text-zinc-300 text-xs leading-relaxed">
+                            {resp.classificationRationale}
+                          </p>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })
@@ -1144,14 +1288,44 @@ RATIONALE: [2-3 sentences explaining the legal and factual basis for this classi
                     </label>
                     <input
                       type="file"
-                      accept=".pdf,.png,.jpg,.jpeg"
-                      onChange={(e) => setResponseFile(e.target.files?.[0] || null)}
+                      accept=".pdf,.png,.jpg,.jpeg,.webp"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        setResponseFile(file);
+                        if (file) {
+                          setUploadedAttachment(null);
+                          setResponseSaveError(null);
+                        }
+                      }}
                       className="w-full text-xs text-zinc-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[#007FFF]/10 file:text-[#007FFF] hover:file:bg-[#007FFF]/20"
                     />
-                    <span className="text-[10px] text-zinc-400 mt-1 block">
-                      SHA-256 checksum will be computed and verified locally.
-                    </span>
+                    {uploadedAttachment ? (
+                      <div className="mt-2 p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
+                        <span>✓ Uploaded to storage: <strong>{uploadedAttachment.fileName}</strong></span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUploadedAttachment(null);
+                            setResponseFile(null);
+                          }}
+                          className="text-[10px] text-zinc-500 hover:text-red-500 underline cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-zinc-400 mt-1 block">
+                        SHA-256 digest calculated client-side; uploaded to private cloud storage.
+                      </span>
+                    )}
                   </div>
+
+                  {responseSaveError && (
+                    <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-300 flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                      <span>{responseSaveError}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">

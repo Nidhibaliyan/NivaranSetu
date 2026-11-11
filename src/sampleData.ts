@@ -83,8 +83,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         date: '2026-11-04 11:00',
         title: 'Bank email reply denying compensation',
         description: 'Bank emailed that customer compromised credentials and declined reversal without forensic audit.',
-        evidenceId: 'ev-5',
-        verifiedByDoc: true,
+        evidenceId: null,
+        verifiedByDoc: false,
       },
     ],
     evidence: [
@@ -96,7 +96,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         fileSize: '1.4 MB',
         fileType: 'image/png',
         uploadDate: '2026-10-29',
-        sha256Hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        sha256Hash: null,
+        hasBlob: false,
         ocrExtracted: {
           dates: ['28-10-2026'],
           amounts: ['₹12.00 verification fee requested'],
@@ -104,7 +105,7 @@ export const INITIAL_CASES: GrievanceCase[] = [
           parties: ['Discom Impersonator'],
           summary: 'Threat message warning disconnection at 21:30 hrs unless bill verified via linked file.',
         },
-        verifiedOriginal: true,
+        verifiedOriginal: false,
       },
       {
         id: 'ev-2',
@@ -114,7 +115,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         fileSize: '2.8 MB',
         fileType: 'application/pdf',
         uploadDate: '2026-10-29',
-        sha256Hash: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+        sha256Hash: null,
+        hasBlob: false,
         ocrExtracted: {
           dates: ['28-10-2026 18:04:12', '28-10-2026 18:07:05', '28-10-2026 18:09:44'],
           amounts: ['₹15,000.00', '₹15,000.00', '₹12,500.00'],
@@ -122,7 +124,7 @@ export const INITIAL_CASES: GrievanceCase[] = [
           parties: ['Apex Bank Savings A/c **4910', 'VPA: ref-collect92@okaxis'],
           summary: 'Three sequential debit transactions within 5 minutes totaling INR 42,500 to an unregistered beneficiary.',
         },
-        verifiedOriginal: true,
+        verifiedOriginal: false,
       },
       {
         id: 'ev-3',
@@ -132,7 +134,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         fileSize: '480 KB',
         fileType: 'application/pdf',
         uploadDate: '2026-10-30',
-        sha256Hash: '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',
+        sha256Hash: null,
+        hasBlob: false,
         ocrExtracted: {
           dates: ['28-10-2026 19:15:33'],
           amounts: ['₹42,500'],
@@ -140,7 +143,7 @@ export const INITIAL_CASES: GrievanceCase[] = [
           parties: ['Complainant: Rajesh M. Joshi', 'Police Station: Cyber Crime Cell, Shivajinagar'],
           summary: 'Official acknowledgement slip lodged under Section 66D IT Act / 420 IPC reporting unconsented debit.',
         },
-        verifiedOriginal: true,
+        verifiedOriginal: false,
       },
       {
         id: 'ev-4',
@@ -150,7 +153,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         fileSize: '1.9 MB',
         fileType: 'application/pdf',
         uploadDate: '2026-10-30',
-        sha256Hash: '4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a',
+        sha256Hash: null,
+        hasBlob: false,
         ocrExtracted: {
           dates: ['29-10-2026'],
           amounts: ['Claim: ₹42,500 + statutory interest'],
@@ -158,7 +162,7 @@ export const INITIAL_CASES: GrievanceCase[] = [
           parties: ['Branch Manager, Apex Bank FC Road Branch', 'Customer A/c No. 9102830018'],
           summary: 'Formal notice served within 18 hours of incident invoking RBI circular zero customer liability provisions.',
         },
-        verifiedOriginal: true,
+        verifiedOriginal: false,
       },
     ],
     missingElements: [
@@ -188,8 +192,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         action: 'Evidence Ingestion: sms_threat_electricity_notice.png',
         actor: 'Citizen (Browser Session)',
         timestamp: '2026-10-29 10:14:22 UTC',
-        details: 'Calculated SHA-256 fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855. Size: 1.4 MB.',
-        fileHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        details: 'Synthetic exhibit metadata initialized for demonstration. No physical file was ingested, and no genuine cryptographic hash was computed. Size: 1.4 MB.',
+        fileHash: null,
       },
       {
         id: 'ev-ns0842-3',
@@ -209,8 +213,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         action: 'Evidence Ingestion: passbook_statement_debits.pdf',
         actor: 'Citizen (Browser Session)',
         timestamp: '2026-10-29 10:15:10 UTC',
-        details: 'Calculated SHA-256 fingerprint: a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e. Size: 840 KB.',
-        fileHash: 'a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e',
+        details: 'Synthetic exhibit metadata initialized for demonstration. No physical file was ingested, and no genuine cryptographic hash was computed. Size: 840 KB.',
+        fileHash: null,
       },
       {
         id: 'ev-ns0842-5',
@@ -365,7 +369,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         fileSize: '8.4 MB',
         fileType: 'application/pdf',
         uploadDate: '2026-11-01',
-        sha256Hash: 'ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d',
+        sha256Hash: null,
+        hasBlob: false,
         ocrExtracted: {
           dates: ['15-08-2021', '31-03-2024'],
           amounts: ['Total Consideration: ₹82,50,000', 'Paid Till Date: ₹74,25,000 (90%)'],
@@ -373,7 +378,7 @@ export const INITIAL_CASES: GrievanceCase[] = [
           parties: ['Allottee: Sunita Verma', 'Promoter: Greenfield Infra Pvt Ltd'],
           summary: 'Clause 14 clearly stipulates handover by 31 March 2024 with maximum 6 months force majeure allowance.',
         },
-        verifiedOriginal: true,
+        verifiedOriginal: false,
       },
       {
         id: 'ev-rera-2',
@@ -383,7 +388,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         fileSize: '3.1 MB',
         fileType: 'application/pdf',
         uploadDate: '2026-11-01',
-        sha256Hash: 'a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef',
+        sha256Hash: null,
+        hasBlob: false,
         ocrExtracted: {
           dates: ['2021-2024'],
           amounts: ['Total Paid: ₹74,25,000'],
@@ -391,7 +397,7 @@ export const INITIAL_CASES: GrievanceCase[] = [
           parties: ['Greenfield Infra', 'HDFC Home Loan A/c 6489012'],
           summary: 'Verified record that 90% of total apartment consideration has been remitted without default.',
         },
-        verifiedOriginal: true,
+        verifiedOriginal: false,
       },
     ],
     missingElements: [
@@ -422,8 +428,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         action: 'Evidence Ingestion: apartment_buyer_agreement_stamped.pdf',
         actor: 'Citizen (Browser Session)',
         timestamp: '2026-11-01 11:15:30 UTC',
-        details: 'Calculated SHA-256 fingerprint: c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef1234. Size: 8.4 MB.',
-        fileHash: 'c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef1234',
+        details: 'Synthetic exhibit metadata initialized for demonstration. No physical file was ingested, and no genuine cryptographic hash was computed. Size: 8.4 MB.',
+        fileHash: null,
       },
       {
         id: 'ev-ns0619-3',
@@ -532,7 +538,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         fileSize: '1.2 MB',
         fileType: 'application/pdf',
         uploadDate: '2026-10-09',
-        sha256Hash: '3c9909afec25354d551dae21590bb26e38d53f2173b8d3dc3eee4c047e7ab1c1',
+        sha256Hash: null,
+        hasBlob: false,
         ocrExtracted: {
           dates: ['02-10-2026'],
           amounts: ['₹1,14,999.00 inclusive of 28% GST'],
@@ -540,7 +547,7 @@ export const INITIAL_CASES: GrievanceCase[] = [
           parties: ['Seller: OmniRetail Bangalore', 'Buyer: Arvind Kulkarni'],
           summary: 'Valid retail sale invoice with serial number matching physical TV sticker.',
         },
-        verifiedOriginal: true,
+        verifiedOriginal: false,
       },
       {
         id: 'ev-cons-2',
@@ -550,7 +557,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         fileSize: '2.1 MB',
         fileType: 'application/pdf',
         uploadDate: '2026-10-09',
-        sha256Hash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+        sha256Hash: null,
+        hasBlob: false,
         ocrExtracted: {
           dates: ['06-10-2026 14:15'],
           amounts: ['Repair estimate: Economically unviable / DOA replacement advised'],
@@ -558,7 +566,7 @@ export const INITIAL_CASES: GrievanceCase[] = [
           parties: ['VisionTech Brand Authorised Service Center'],
           summary: 'Unambiguous technical finding that defect occurred before unboxing due to transit shock.',
         },
-        verifiedOriginal: true,
+        verifiedOriginal: false,
       },
     ],
     missingElements: [],
@@ -586,8 +594,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         action: 'Evidence Ingestion: quickbazaar_tax_invoice_tv.pdf',
         actor: 'Citizen (Browser Session)',
         timestamp: '2026-10-09 16:10:00 UTC',
-        details: 'Calculated SHA-256 fingerprint: 3c9909afec25354d551dae21590bb26e38d53f2173b8d3dc3eee4c047e7ab1c1. Size: 1.2 MB.',
-        fileHash: '3c9909afec25354d551dae21590bb26e38d53f2173b8d3dc3eee4c047e7ab1c1',
+        details: 'Synthetic exhibit metadata initialized for demonstration. No physical file was ingested, and no genuine cryptographic hash was computed. Size: 1.2 MB.',
+        fileHash: null,
       },
       {
         id: 'ev-ns0381-3',
@@ -597,8 +605,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         action: 'Evidence Ingestion: brand_engineer_doa_report.pdf',
         actor: 'Citizen (Browser Session)',
         timestamp: '2026-10-09 16:12:00 UTC',
-        details: 'Calculated SHA-256 fingerprint: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad. Size: 2.1 MB.',
-        fileHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+        details: 'Synthetic exhibit metadata initialized for demonstration. No physical file was ingested, and no genuine cryptographic hash was computed. Size: 2.1 MB.',
+        fileHash: null,
       },
       {
         id: 'ev-ns0381-4',
@@ -702,7 +710,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         fileSize: '3.4 MB',
         fileType: 'application/pdf',
         uploadDate: '2026-10-25',
-        sha256Hash: '7d793037a0760186574b0282f2f435e70d161a008ced1e65839ff12ef653a928',
+        sha256Hash: null,
+        hasBlob: false,
         ocrExtracted: {
           dates: ['18-09-2026 to 22-09-2026'],
           amounts: ['Final Bill: ₹2,84,000'],
@@ -710,7 +719,7 @@ export const INITIAL_CASES: GrievanceCase[] = [
           parties: ['Apex Hospital Jaipur', 'Patient: Manoj Sharma'],
           summary: 'Acute condition requiring emergency laparoscopic surgery without chronic history.',
         },
-        verifiedOriginal: true,
+        verifiedOriginal: false,
       },
     ],
     missingElements: [
@@ -741,8 +750,8 @@ export const INITIAL_CASES: GrievanceCase[] = [
         action: 'Evidence Ingestion: cashless_denial_rejection_letter.pdf',
         actor: 'Citizen (Browser Session)',
         timestamp: '2026-11-04 15:45:00 UTC',
-        details: 'Calculated SHA-256 fingerprint: d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef123456. Size: 980 KB.',
-        fileHash: 'd4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef123456',
+        details: 'Synthetic exhibit metadata initialized for demonstration. No physical file was ingested, and no genuine cryptographic hash was computed. Size: 980 KB.',
+        fileHash: null,
       },
       {
         id: 'ev-ns0211-3',
@@ -806,13 +815,13 @@ export const SAMPLE_TRUST_CHECK_RECORDS: TrustCheckRecord[] = [
     input: '8910293812',
     type: 'phone',
     riskLevel: 'high_risk',
-    resultStatus: 'Verified adverse match',
+    resultStatus: 'Adverse catalog match',
     flagTitle: 'Identified in Electricity Disconnection Phishing Wave',
     description: 'This phone number has been flagged in over 42 citizen reports over the past 14 days as an impersonator of state electricity distribution companies (Discoms). Sends urgent SMS threatening disconnection within 2 hours.',
     officialFindings: [
-      'Flagged on National Cyber Crime Reporting Portal (1930) as active phishing sender.',
-      'DoT Sanchar Saathi (Chakshu) lists this MSISDN under bulk fraudulent outbound SMS.',
-      'Linked to rogue APK payload distribution servers.',
+      'Reported in consumer safety warnings as active phishing pattern impersonating Discoms.',
+      'DoT Sanchar Saathi (Chakshu) public alert pattern for bulk fraudulent outbound SMS.',
+      'Linked to rogue APK payload distribution pattern.',
     ],
     governmentAdvisories: [
       {
@@ -827,9 +836,9 @@ export const SAMPLE_TRUST_CHECK_RECORDS: TrustCheckRecord[] = [
       },
     ],
     sourceReferences: [
-      'National Cyber Crime Reporting Portal (1930) Advisory #2026-CYBER-DISCOM',
-      'DoT Sanchar Saathi Chakshu Fraud Indicator',
-      'State Electricity Regulatory Commission Consumer Alert',
+      'National Cyber Crime Reporting Portal Public Safety Advisory (Electricity Discom Wave)',
+      'DoT Sanchar Saathi Chakshu Fraud Indicator Pattern',
+      'Consumer Advisory Reference on Utility Impersonation',
     ],
     timestamp: '2026-11-07 16:20:10 UTC',
     lastChecked: '07 Nov 2026, 04:20 PM IST',
@@ -856,12 +865,12 @@ export const SAMPLE_TRUST_CHECK_RECORDS: TrustCheckRecord[] = [
     input: 'refund-desk99@oksbi',
     type: 'upi',
     riskLevel: 'high_risk',
-    resultStatus: 'Verified adverse match',
+    resultStatus: 'Adverse catalog match',
     flagTitle: 'Deceptive Virtual Payment Address (VPA) / Fraud Collect Pattern',
     description: 'Impersonates official bank refund desk. Pattern indicates collect-request fraud where victim is asked to enter UPI PIN to receive a supposed refund, which actually debits their account.',
     officialFindings: [
       'NPCI Security Bulletin: Individual VPA using registered trademark "sbi" without authorized corporate PSP sponsorship.',
-      'Reported on RBI Sachet warning matrix for unauthorized payment gateway collect requests.',
+      'Reported in public caution advisories for unauthorized payment gateway collect requests.',
     ],
     governmentAdvisories: [
       {
@@ -877,7 +886,7 @@ export const SAMPLE_TRUST_CHECK_RECORDS: TrustCheckRecord[] = [
     ],
     sourceReferences: [
       'NPCI UPI Security Bulletin on Fake VPA Suffixes',
-      'RBI Sachet Public Warning Matrix',
+      'RBI Sachet Public Warning Matrix Reference',
     ],
     timestamp: '2026-11-07 14:12:00 UTC',
     lastChecked: '07 Nov 2026, 02:12 PM IST',
@@ -904,23 +913,23 @@ export const SAMPLE_TRUST_CHECK_RECORDS: TrustCheckRecord[] = [
     input: 'https://fast-ebill-update.xyz/pay.apk',
     type: 'url',
     riskLevel: 'high_risk',
-    resultStatus: 'Verified adverse match',
+    resultStatus: 'Adverse catalog match',
     flagTitle: 'Malicious Android APK Delivery Endpoint',
-    description: 'Domain registered 4 days ago via anonymous privacy guard. Delivers remote-access trojan that intercepts incoming SMS OTPs and notification listeners.',
+    description: 'Pre-compiled illustrative pattern-catalog reference demonstrating a remote-access trojan delivery vector disguised as an electricity utility bill update. This entry reflects offline pattern analysis and is not a live police or government database lookup.',
     officialFindings: [
-      'CERT-In Alert CIET-2026-0419: Malicious Android package spoofing utility bills.',
-      'Google Play Protect blacklisted URL endpoint for Trojan.AndroidOS.SmsStealer.',
+      'Illustrative catalog pattern: Matches characteristic markers for rogue utility APK distribution.',
+      'General advisory awareness: Reflects public caution guidance regarding fake utility APK sideloading risks (not a case-specific government investigation finding).',
     ],
     governmentAdvisories: [
       {
-        title: 'CERT-In Vulnerability Note on Fake APK Side-loading',
+        title: 'CERT-In Citizen Advisory on Fake APK Side-loading (General Public Guidance)',
         authority: 'Indian Computer Emergency Response Team (CERT-In)',
         url: 'https://cert-in.org.in',
       },
     ],
     sourceReferences: [
-      'CERT-In Cyber Security Incident Response Indicator',
-      'Google Play Protect Malware Signature Registry',
+      'Curated Threat Pattern Catalog (Illustrative Malicious APK Delivery Vector)',
+      'Public Cyber Safety Advisory Reference (General Guidance)',
     ],
     timestamp: '2026-11-06 21:05:40 UTC',
     lastChecked: '06 Nov 2026, 09:05 PM IST',
@@ -987,7 +996,7 @@ export const SAMPLE_TRUST_CHECK_RECORDS: TrustCheckRecord[] = [
     flagTitle: 'No Matching Adverse Record Found in Public Warnings',
     description: 'No complaints or negative flags match this merchant identifier in public registries. However, absence of adverse record does not guarantee safety.',
     officialFindings: [
-      'No adverse fraud records or 1930 consumer flags found across checked advisories.',
+      'No adverse fraud records or consumer flags found across checked public advisories.',
       'Registered commercial merchant VPA with standard merchant acquiring prefix.',
     ],
     governmentAdvisories: [
@@ -998,8 +1007,8 @@ export const SAMPLE_TRUST_CHECK_RECORDS: TrustCheckRecord[] = [
       },
     ],
     sourceReferences: [
-      'Verified BBPS Commercial Registry',
-      'Public Fraud Database Negative Match Registry',
+      'Commercial Merchant Registry Reference',
+      'Public Fraud Database Negative Match Reference',
     ],
     timestamp: '2026-11-07 09:30:15 UTC',
     lastChecked: '07 Nov 2026, 09:30 AM IST',

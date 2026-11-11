@@ -30,6 +30,13 @@ import {
   audioFileToBase64,
   createSampleAudioBase64
 } from '../utils/audioUtils';
+import {
+  CHAT_CLIENT_TIMEOUT_MS,
+  TRANSCRIBE_CLIENT_TIMEOUT_MS,
+  boundConversationHistory,
+  fetchWithTimeout,
+  formatAiErrorMessage,
+} from '../utils/aiClientUtils';
 
 interface GlobalAssistantProps {
   onNavigateToTab?: (tab: string) => void;
@@ -47,7 +54,7 @@ interface ChatMessage {
   };
 }
 
-type ModelType = 'gemini-2.0-flash' | 'gemini-1.5-pro' | 'gemini-2.0-flash-lite';
+type ModelType = 'gemini-3.8-flash' | 'gemini-4-argon' | 'gemini-3.5-flash-lite' | 'gemini-2.0-flash' | 'gemini-1.5-pro' | 'gemini-2.0-flash-lite';
 
 export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTab }) => {
   const { language } = useLanguage();
@@ -57,17 +64,17 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
   const [isLoading, setIsLoading] = useState(false);
 
   // Model selection state
-  // gemini-2.0-flash for general tasks, gemini-1.5-pro for complex legal tasks, gemini-2.0-flash-lite for fast tasks
-  const [selectedModel, setSelectedModel] = useState<ModelType>('gemini-2.0-flash');
+  // gemini-3.8-flash for general tasks, gemini-4-argon for complex legal tasks, gemini-3.5-flash-lite for fast tasks
+  const [selectedModel, setSelectedModel] = useState<ModelType>('gemini-3.8-flash');
 
-  // Audio transcription with gemini-2.0-flash
+  // Audio transcription with gemini-3.5-transcribe
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcriptionNotice, setTranscriptionNotice] = useState<string | null>(null);
   const [micBlocked, setMicBlocked] = useState(false);
   const micRecorderRef = useRef<MicrophoneRecorder | null>(null);
   const audioFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Live Voice Conversation state with gemini-2.0-flash-exp
+  // Live Voice Conversation state with gemini-live-2.5-flash-preview
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [liveStatus, setLiveStatus] = useState<string>('Connecting...');
@@ -81,6 +88,8 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const activeSourceNodesRef = useRef<AudioBufferSourceNode[]>([]);
+  const currentSessionIdRef = useRef<number>(0);
+  const lastServerErrorRef = useRef<string | null>(null);
 
   // TTS read-aloud state
   const [ttsActive, setTtsActive] = useState<string | null>(null);
@@ -93,7 +102,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
       sender: 'assistant',
       text: "Hello! I'm your NivaranSetu assistant. Tell me what happened in your own words. I'll help you understand what to do next.",
       timestamp: 'Just now',
-      modelUsed: 'gemini-2.0-flash',
+      modelUsed: 'gemini-3.8-flash',
     },
   ]);
 
@@ -223,65 +232,81 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
     try {
       const { base64, mimeType } = await micRecorderRef.current.stop();
 
-      const response = await fetch('/api/gemini/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioBase64: base64,
-          mimeType,
-          prompt: language === 'hi' 
-            ? 'इस नागरिक शिकायत रिकॉर्डिंग को सटीक रूप से ट्रांसक्राइब करें।'
-            : 'Transcribe this citizen grievance recording accurately with all transaction values and dates.',
-        }),
-      });
+      const response = await fetchWithTimeout(
+        '/api/gemini/transcribe',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audioBase64: base64,
+            mimeType,
+            prompt: language === 'hi' 
+              ? 'इस नागरिक शिकायत रिकॉर्डिंग को सटीक रूप से ट्रांसक्राइब करें।'
+              : 'Transcribe this citizen grievance recording accurately with all transaction values and dates.',
+          }),
+        },
+        TRANSCRIBE_CLIENT_TIMEOUT_MS
+      );
 
       const data = await response.json();
 
       if (response.ok && data.text) {
         setInputMessage((prev) => (prev ? `${prev} ${data.text}` : data.text));
-        setTranscriptionNotice('Transcribed successfully via gemini-2.0-flash');
+        setTranscriptionNotice('Transcribed successfully via gemini-3.5-transcribe');
         setTimeout(() => setTranscriptionNotice(null), 3000);
       } else {
         throw new Error(data.error || 'Failed to transcribe');
       }
     } catch (err: any) {
       console.warn('Transcription error:', err?.message || err);
-      setTranscriptionNotice('Could not transcribe audio. Please try typing or uploading an audio file.');
+      const errorMsg = formatAiErrorMessage(
+        err,
+        'Could not transcribe audio. Please try typing or uploading an audio file.'
+      );
+      setTranscriptionNotice(errorMsg);
       setTimeout(() => setTranscriptionNotice(null), 4000);
     }
   };
 
-  // Upload an audio file (.mp3, .wav, .m4a, .webm) and transcribe with gemini-2.0-flash
+  // Upload an audio file (.mp3, .wav, .m4a, .webm) and transcribe with gemini-3.5-transcribe
   const handleAudioFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setTranscriptionNotice(`Transcribing "${file.name}" with gemini-2.0-flash...`);
+    setTranscriptionNotice(`Transcribing "${file.name}" with gemini-3.5-transcribe...`);
     try {
       const { base64, mimeType } = await audioFileToBase64(file);
-      const response = await fetch('/api/gemini/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioBase64: base64,
-          mimeType,
-          prompt: language === 'hi' 
-            ? 'इस नागरिक शिकायत रिकॉर्डिंग को सटीक रूप से ट्रांसक्राइब करें।'
-            : 'Transcribe this citizen grievance audio accurately with all transaction numbers, dates, and amounts.',
-        }),
-      });
+      const response = await fetchWithTimeout(
+        '/api/gemini/transcribe',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audioBase64: base64,
+            mimeType,
+            prompt: language === 'hi' 
+              ? 'इस नागरिक शिकायत रिकॉर्डिंग को सटीक रूप से ट्रांसक्राइब करें।'
+              : 'Transcribe this citizen grievance audio accurately with all transaction numbers, dates, and amounts.',
+          }),
+        },
+        TRANSCRIBE_CLIENT_TIMEOUT_MS
+      );
 
       const data = await response.json();
       if (response.ok && data.text) {
         setInputMessage((prev) => (prev ? `${prev} ${data.text}` : data.text));
-        setTranscriptionNotice('Audio file transcribed successfully with gemini-2.0-flash!');
+        setTranscriptionNotice('Audio file transcribed successfully with gemini-3.5-transcribe!');
         setTimeout(() => setTranscriptionNotice(null), 3500);
       } else {
         throw new Error(data.error || 'Transcription failed');
       }
     } catch (err: any) {
       console.warn('Audio file transcription error:', err?.message || err);
-      setTranscriptionNotice('Could not transcribe audio file. Please try another audio file.');
+      const errorMsg = formatAiErrorMessage(
+        err,
+        'Could not transcribe audio file. Please try another audio file.'
+      );
+      setTranscriptionNotice(errorMsg);
       setTimeout(() => setTranscriptionNotice(null), 4000);
     } finally {
       if (e.target) e.target.value = '';
@@ -290,34 +315,48 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
 
   // Transcribe sample audio grievance directly
   const handleSampleAudioTranscription = async () => {
-    setTranscriptionNotice('Transcribing sample grievance recording with gemini-2.0-flash...');
+    setTranscriptionNotice('Transcribing sample grievance recording with gemini-3.5-transcribe...');
     try {
       const sampleBase64 = createSampleAudioBase64();
-      const response = await fetch('/api/gemini/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioBase64: sampleBase64,
-          mimeType: 'audio/wav',
-          prompt: 'Transcribe this citizen grievance recording: "On 28th October, I received an SMS about power bill disconnection. I installed an app to check my bill and immediately three unauthorized UPI transactions totaling ₹42,500 were debited without my consent."',
-        }),
-      });
+      const response = await fetchWithTimeout(
+        '/api/gemini/transcribe',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audioBase64: sampleBase64,
+            mimeType: 'audio/wav',
+            prompt: 'Transcribe this citizen grievance recording: "On 28th October, I received an SMS about power bill disconnection. I installed an app to check my bill and immediately three unauthorized UPI transactions totaling ₹42,500 were debited without my consent."',
+          }),
+        },
+        TRANSCRIBE_CLIENT_TIMEOUT_MS
+      );
 
       const data = await response.json();
-      const transcribedText = data.text || 'On 28th October, I received an SMS regarding electricity disconnection. I was defrauded of ₹42,500 via three unauthorized UPI transactions.';
+      if (!response.ok) {
+        throw new Error(data.error || `Server responded with HTTP ${response.status}`);
+      }
+      if (!data.text) {
+        throw new Error('No transcription returned');
+      }
+      const transcribedText = data.text;
       setInputMessage((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
-      setTranscriptionNotice('Sample voice transcribed successfully via gemini-2.0-flash!');
+      setTranscriptionNotice('Sample voice transcribed successfully via gemini-3.5-transcribe!');
       setTimeout(() => setTranscriptionNotice(null), 3500);
-    } catch (err) {
+    } catch (err: any) {
+      console.warn('Sample transcription notice:', err?.message || err);
       const fallbackText = 'On 28th October, I received an SMS regarding electricity disconnection. I was defrauded of ₹42,500 via three unauthorized UPI transactions.';
       setInputMessage((prev) => (prev ? `${prev} ${fallbackText}` : fallbackText));
-      setTranscriptionNotice('Sample voice loaded successfully!');
-      setTimeout(() => setTranscriptionNotice(null), 3500);
+      const failureReason = err?.name === 'TimeoutError' ? 'request timed out' : (err?.message || 'offline');
+      setTranscriptionNotice(
+        `Live transcription unavailable (${failureReason}). Loaded offline sample template instead.`
+      );
+      setTimeout(() => setTranscriptionNotice(null), 5000);
     }
   };
 
   // --------------------------------------------------------------------------
-  // FEATURE 2: Multi-turn Chatbot with Gemini (gemini-2.0-flash / gemini-1.5-pro / gemini-2.0-flash-lite)
+  // FEATURE 2: Multi-turn Chatbot with Gemini (gemini-3.8-flash / gemini-4-argon / gemini-3.5-flash-lite)
   // --------------------------------------------------------------------------
   const handleSendMessage = async (customText?: string, targetTab?: string) => {
     const text = (customText || inputMessage).trim();
@@ -336,20 +375,31 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
     setIsLoading(true);
 
     try {
-      const chatHistory = updatedMessages.map((m) => ({
-        role: m.sender === 'user' ? 'user' : 'model',
-        text: m.text,
-      }));
+      // Bound conversation history to at most 40 valid turns (backend limit is 50),
+      // filtering out error notification cards so they are never passed to Gemini as model turns
+      const chatHistory = boundConversationHistory(updatedMessages, 40);
+      if (chatHistory.length === 0) {
+        return;
+      }
 
-      const res = await fetch('/api/gemini/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: chatHistory,
-          requestedModel: selectedModel,
-          taskType: selectedModel === 'gemini-1.5-pro' ? 'complex' : selectedModel === 'gemini-2.0-flash-lite' ? 'fast' : 'general',
-        }),
-      });
+      const res = await fetchWithTimeout(
+        '/api/gemini/chat',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: chatHistory,
+            requestedModel: selectedModel,
+            taskType:
+              selectedModel === 'gemini-4-argon' || selectedModel === 'gemini-1.5-pro'
+                ? 'complex'
+                : selectedModel === 'gemini-3.5-flash-lite' || selectedModel === 'gemini-2.0-flash-lite'
+                ? 'fast'
+                : 'general',
+          }),
+        },
+        CHAT_CLIENT_TIMEOUT_MS
+      );
 
       const data = await res.json();
 
@@ -384,10 +434,11 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
       setMessages((prev) => [...prev, assistantMsg]);
     } catch (err: any) {
       console.warn('Chat request notice:', err?.message || err);
+      const friendlyError = formatAiErrorMessage(err, 'Failed to generate response');
       const errorMsg: ChatMessage = {
         id: `ast-err-${Date.now()}`,
         sender: 'assistant',
-        text: `I encountered an issue connecting to Gemini: ${err.message || 'Network error'}. Please verify your network and retry.`,
+        text: `I encountered an issue connecting to Gemini: ${friendlyError}. Please verify your network and retry.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         modelUsed: selectedModel,
       };
@@ -398,11 +449,89 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
   };
 
   // --------------------------------------------------------------------------
-  // FEATURE 3: Voice Conversations with Gemini Live API (gemini-2.0-flash-exp)
+  // FEATURE 3: Voice Conversations with Gemini Live API (gemini-live-2.5-flash-preview)
   // --------------------------------------------------------------------------
+  /**
+   * Idempotently tears down audio hardware, microphone media stream tracks,
+   * ScriptProcessorNode listeners, and AudioContext instances (DEF-01).
+   */
+  const teardownAudioHardware = () => {
+    // 1. Disconnect ScriptProcessorNode and clear processor listener
+    if (scriptProcessorRef.current) {
+      try {
+        scriptProcessorRef.current.onaudioprocess = null;
+        scriptProcessorRef.current.disconnect();
+      } catch (_) {}
+      scriptProcessorRef.current = null;
+    }
+
+    // 2. Stop all microphone MediaStream tracks
+    if (audioStreamRef.current) {
+      try {
+        audioStreamRef.current.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch (_) {}
+        });
+      } catch (_) {}
+      audioStreamRef.current = null;
+    }
+
+    // 3. Stop and disconnect all active playback source nodes
+    if (activeSourceNodesRef.current.length > 0) {
+      activeSourceNodesRef.current.forEach((node) => {
+        try {
+          node.onended = null;
+          node.stop();
+          node.disconnect();
+        } catch (_) {}
+      });
+      activeSourceNodesRef.current = [];
+    }
+
+    // 4. Safely close AudioContexts if open
+    if (inputAudioCtxRef.current) {
+      try {
+        if (inputAudioCtxRef.current.state !== 'closed') {
+          inputAudioCtxRef.current.close().catch(() => {});
+        }
+      } catch (_) {}
+      inputAudioCtxRef.current = null;
+    }
+
+    if (outputAudioCtxRef.current) {
+      try {
+        if (outputAudioCtxRef.current.state !== 'closed') {
+          outputAudioCtxRef.current.close().catch(() => {});
+        }
+      } catch (_) {}
+      outputAudioCtxRef.current = null;
+    }
+  };
+
   const startLiveVoiceSession = async () => {
+    // Generate unique session id to guard against stale callbacks from past sessions
+    const sessionId = ++currentSessionIdRef.current;
+    lastServerErrorRef.current = null;
+
+    // Clean up any existing connection or audio hardware before starting new session
+    teardownAudioHardware();
+    if (liveWsRef.current) {
+      try {
+        const prevWs = liveWsRef.current;
+        liveWsRef.current = null;
+        prevWs.onopen = null;
+        prevWs.onmessage = null;
+        prevWs.onerror = null;
+        prevWs.onclose = null;
+        if (prevWs.readyState === WebSocket.OPEN || prevWs.readyState === WebSocket.CONNECTING) {
+          prevWs.close();
+        }
+      } catch (_) {}
+    }
+
     setIsLiveMode(true);
-    setLiveStatus('Connecting to Gemini 2.0 Flash Exp Live API...');
+    setLiveStatus('Connecting to Gemini Live Voice API...');
     setLiveTranscript('');
     setLiveAgentSpeaking(false);
     setMicBlocked(false);
@@ -434,6 +563,15 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
           autoGainControl: true,
         },
       });
+
+      // Guard: If session was cancelled while awaiting getUserMedia
+      if (currentSessionIdRef.current !== sessionId) {
+        stream.getTracks().forEach((track) => track.stop());
+        inputCtx.close().catch(() => {});
+        outputCtx.close().catch(() => {});
+        return;
+      }
+
       audioStreamRef.current = stream;
 
       const source = inputCtx.createMediaStreamSource(stream);
@@ -441,6 +579,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
       scriptProcessorRef.current = processor;
 
       processor.onaudioprocess = (e) => {
+        if (currentSessionIdRef.current !== sessionId) return;
         if (ws.readyState === WebSocket.OPEN) {
           const inputData = e.inputBuffer.getChannelData(0);
           const pcm16 = floatTo16BitPCM(inputData);
@@ -453,16 +592,23 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
       processor.connect(inputCtx.destination);
 
       ws.onopen = () => {
+        if (currentSessionIdRef.current !== sessionId) return;
         setIsLiveConnected(true);
         setLiveStatus('Connected. Speak freely in Hindi or English.');
       };
 
       ws.onmessage = (event) => {
+        if (currentSessionIdRef.current !== sessionId) return;
         try {
           const msg = JSON.parse(event.data);
 
           if (msg.error) {
-            setLiveStatus(`Live session status: ${msg.error}`);
+            // Preserve server-provided error notice (e.g. 5-min timeout or capacity limit)
+            lastServerErrorRef.current = msg.error;
+            setLiveStatus(msg.error);
+            if (msg.closed) {
+              teardownAudioHardware();
+            }
             return;
           }
 
@@ -509,16 +655,35 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
       };
 
       ws.onerror = (e) => {
+        if (currentSessionIdRef.current !== sessionId) return;
         console.warn('Live WebSocket status notice:', e);
-        setLiveStatus('Live connection interrupted.');
+        if (!lastServerErrorRef.current) {
+          setLiveStatus('Live connection interrupted.');
+        }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        if (currentSessionIdRef.current !== sessionId) return;
+
+        // Ensure audio hardware is cleanly stopped on disconnect
+        teardownAudioHardware();
         setIsLiveConnected(false);
-        setLiveStatus('Live conversation disconnected.');
+        setLiveAgentSpeaking(false);
+        liveWsRef.current = null;
+
+        // Preserve server-sent notice (e.g., 5-min timeout) without overwriting with generic message
+        if (lastServerErrorRef.current) {
+          setLiveStatus(lastServerErrorRef.current);
+        } else if (event.reason) {
+          setLiveStatus(`Live conversation ended: ${event.reason}`);
+        } else {
+          setLiveStatus('Live conversation disconnected.');
+        }
       };
     } catch (err: any) {
+      if (currentSessionIdRef.current !== sessionId) return;
       console.warn('Live voice session initialization notice:', err?.name || err?.message || 'Access denied');
+      teardownAudioHardware();
       setMicBlocked(true);
       setLiveStatus(
         'Microphone permission is blocked by your browser. Please allow microphone access in your browser settings (click lock icon in address bar) to talk live.'
@@ -532,50 +697,39 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
     }
   };
 
-  const cleanupLiveSession = () => {
+  /**
+   * Cleans up live voice session idempotently (DEF-01).
+   * Safe to call multiple times or when no session is active.
+   */
+  const cleanupLiveSession = (statusMessage?: string) => {
+    // Invalidate session sequence so superseded WebSocket callbacks are dropped
+    currentSessionIdRef.current++;
+
+    // 1. Release all audio hardware and AudioContexts idempotently
+    teardownAudioHardware();
+
+    // 2. Close WebSocket safely if still active
     if (liveWsRef.current) {
       try {
-        liveWsRef.current.close();
+        const ws = liveWsRef.current;
+        liveWsRef.current = null;
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close(1000, 'Session ended');
+        }
       } catch (_) {}
-      liveWsRef.current = null;
     }
 
-    if (scriptProcessorRef.current) {
-      try {
-        scriptProcessorRef.current.disconnect();
-      } catch (_) {}
-      scriptProcessorRef.current = null;
-    }
-
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach((track) => track.stop());
-      audioStreamRef.current = null;
-    }
-
-    if (inputAudioCtxRef.current) {
-      try {
-        inputAudioCtxRef.current.close();
-      } catch (_) {}
-      inputAudioCtxRef.current = null;
-    }
-
-    activeSourceNodesRef.current.forEach((node) => {
-      try {
-        node.stop();
-      } catch (_) {}
-    });
-    activeSourceNodesRef.current = [];
-
-    if (outputAudioCtxRef.current) {
-      try {
-        outputAudioCtxRef.current.close();
-      } catch (_) {}
-      outputAudioCtxRef.current = null;
-    }
-
+    // 3. Update React states
     setIsLiveMode(false);
     setIsLiveConnected(false);
     setLiveAgentSpeaking(false);
+    if (statusMessage) {
+      setLiveStatus(statusMessage);
+    }
   };
 
   // Text to speech playback
@@ -660,14 +814,14 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
                 <button
                   onClick={startLiveVoiceSession}
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#007FFF]/10 hover:bg-[#007FFF]/20 text-[#007FFF] font-semibold text-[11px] transition-colors cursor-pointer border border-[#007FFF]/20"
-                  title="Start Real-time Voice Call with Gemini Live API (gemini-3.8-live)"
+                  title="Start Real-time Voice Call with Gemini Live API (gemini-live-2.5-flash-preview)"
                 >
                   <PhoneCall className="w-3.5 h-3.5" />
                   <span>Voice Call</span>
                 </button>
               ) : (
                 <button
-                  onClick={cleanupLiveSession}
+                  onClick={() => cleanupLiveSession('Live conversation ended by user.')}
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-500 font-semibold text-[11px] transition-colors cursor-pointer border border-red-500/20"
                   title="End voice conversation"
                 >
@@ -685,7 +839,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
               </button>
               <button
                 onClick={() => {
-                  cleanupLiveSession();
+                  cleanupLiveSession('Live conversation ended.');
                   setIsOpen(false);
                 }}
                 className="p-1.5 hover:text-zinc-900 dark:hover:text-white rounded-lg transition-colors cursor-pointer"
@@ -702,37 +856,37 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
               <span className="text-zinc-500 font-medium">Gemini Model:</span>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => setSelectedModel('gemini-2.0-flash')}
+                  onClick={() => setSelectedModel('gemini-3.8-flash')}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                    selectedModel === 'gemini-2.0-flash'
+                    selectedModel === 'gemini-3.8-flash' || selectedModel === 'gemini-2.0-flash'
                       ? 'bg-[#007FFF] text-white shadow-xs'
                       : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800'
                   }`}
-                  title="gemini-2.0-flash: Primary standard for general grievance analysis"
+                  title="gemini-3.8-flash: Primary standard for general grievance analysis"
                 >
-                  General (2.0 Flash)
+                  General (3.8 Flash)
                 </button>
                 <button
-                  onClick={() => setSelectedModel('gemini-1.5-pro')}
+                  onClick={() => setSelectedModel('gemini-4-argon')}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                    selectedModel === 'gemini-1.5-pro'
+                    selectedModel === 'gemini-4-argon' || selectedModel === 'gemini-1.5-pro'
                       ? 'bg-[#007FFF] text-white shadow-xs'
                       : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800'
                   }`}
-                  title="gemini-1.5-pro: Deep statutory reasoning & complex legal disputes"
+                  title="gemini-4-argon: Deep statutory reasoning & complex legal disputes"
                 >
-                  Complex (1.5 Pro)
+                  Complex (4 Argon)
                 </button>
                 <button
-                  onClick={() => setSelectedModel('gemini-2.0-flash-lite')}
+                  onClick={() => setSelectedModel('gemini-3.5-flash-lite')}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                    selectedModel === 'gemini-2.0-flash-lite'
+                    selectedModel === 'gemini-3.5-flash-lite' || selectedModel === 'gemini-2.0-flash-lite'
                       ? 'bg-[#007FFF] text-white shadow-xs'
                       : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800'
                   }`}
-                  title="gemini-2.0-flash-lite: Low-latency fast responses"
+                  title="gemini-3.5-flash-lite: Low-latency fast responses"
                 >
-                  Fast (2.0 Lite)
+                  Fast (3.5 Lite)
                 </button>
               </div>
             </div>
@@ -826,7 +980,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
                   </button>
                 )}
                 <button
-                  onClick={cleanupLiveSession}
+                  onClick={() => cleanupLiveSession('Live conversation ended.')}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
                 >
                   <PhoneOff className="w-3.5 h-3.5" />
@@ -835,7 +989,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
               </div>
 
               <div className="mt-3 text-[10px] text-zinc-400 font-mono">
-                Powered by gemini-3.8-live • 16kHz PCM duplex stream
+                Powered by gemini-live-2.5-flash-preview • 16kHz PCM duplex stream
               </div>
             </div>
           ) : (

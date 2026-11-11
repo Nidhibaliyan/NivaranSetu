@@ -142,15 +142,18 @@ export async function getEvidenceBlob(
 export async function verifyEvidenceIntegrity(
   caseId: string,
   evidenceId: string,
-  expectedHash: string
-): Promise<{ verified: boolean; computedHash: string; status: 'matched' | 'mismatched' | 'blob_not_cached' }> {
+  expectedHash: string | null
+): Promise<{ verified: boolean; computedHash: string; status: 'matched' | 'mismatched' | 'blob_not_cached' | 'no_expected_hash' }> {
+  if (!expectedHash || !expectedHash.trim()) {
+    return { verified: false, computedHash: '', status: 'no_expected_hash' };
+  }
   const blob = await getEvidenceBlob(caseId, evidenceId);
   if (!blob) {
-    return { verified: true, computedHash: expectedHash, status: 'blob_not_cached' };
+    return { verified: false, computedHash: expectedHash, status: 'blob_not_cached' };
   }
 
   const computedHash = await calculateSha256(blob);
-  const verified = computedHash.toLowerCase() === expectedHash.toLowerCase();
+  const verified = computedHash.toLowerCase() === expectedHash.trim().toLowerCase();
   return {
     verified,
     computedHash,
@@ -168,10 +171,12 @@ export function createCustodyEvent(
   actor: string,
   details: string,
   evidenceId?: string,
-  fileHash?: string
+  fileHash?: string | null
 ): CustodyEvent {
   const now = new Date();
   const timestamp = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+  const normalizedFileHash =
+    fileHash && fileHash.trim().length > 0 ? fileHash.trim() : null;
 
   return {
     id: `ev-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -182,18 +187,41 @@ export function createCustodyEvent(
     actor,
     timestamp,
     details,
-    fileHash,
+    fileHash: normalizedFileHash,
   };
 }
 
 /**
  * Synchronizes cases to persistent stores (IndexedDB and localStorage).
+ * @deprecated Offline fallback helper retained for unit tests.
+ * Production application persistence is handled authoritatively by `src/utils/caseRepository.ts`.
  */
 export async function persistCases(cases: GrievanceCase[]): Promise<void> {
+  // Normalize hashes and integrity flags at the persistence boundary
+  const normalizedCases = cases.map((c) => ({
+    ...c,
+    evidence: (c.evidence || []).map((ev) => {
+      const cleanHash =
+        ev.sha256Hash && ev.sha256Hash.trim().length > 0 ? ev.sha256Hash.trim() : null;
+      return {
+        ...ev,
+        sha256Hash: cleanHash,
+        hasBlob: ev.hasBlob === true && !!cleanHash,
+        verifiedOriginal:
+          ev.verifiedOriginal === true && ev.hasBlob === true && !!cleanHash,
+      };
+    }),
+    custodyEvents: (c.custodyEvents || []).map((ev) => ({
+      ...ev,
+      fileHash:
+        ev.fileHash && ev.fileHash.trim().length > 0 ? ev.fileHash.trim() : null,
+    })),
+  }));
+
   // 1. Sync to localStorage for instant synchronous reads
   if (typeof localStorage !== 'undefined') {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(cases));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedCases));
     } catch (e) {
       console.warn('localStorage save warning:', e);
     }
@@ -206,7 +234,7 @@ export async function persistCases(cases: GrievanceCase[]): Promise<void> {
   try {
     const tx = db.transaction('cases', 'readwrite');
     const store = tx.objectStore('cases');
-    for (const c of cases) {
+    for (const c of normalizedCases) {
       store.put(c);
     }
   } catch (err) {
@@ -215,7 +243,9 @@ export async function persistCases(cases: GrievanceCase[]): Promise<void> {
 }
 
 /**
- * Loads all saved cases from storage, falling back to INITIAL_CASES.
+ * Loads saved cases from local storage fallback.
+ * @deprecated Offline fallback helper retained for unit tests.
+ * Production application case loading is handled authoritatively by `src/utils/caseRepository.ts`.
  */
 export function loadInitialCases(): GrievanceCase[] {
   if (typeof localStorage === 'undefined') {
@@ -223,9 +253,12 @@ export function loadInitialCases(): GrievanceCase[] {
   }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
+        if (parsed.length === 0) {
+          return [];
+        }
         // Ensure every case has a valid custodyEvents array and proper sample/monitoring flags
         return parsed.map((c: GrievanceCase) => {
           const sampleMatch = INITIAL_CASES.find((init) => init.id === c.id);
@@ -277,22 +310,29 @@ export function generateDefaultCustodyEvents(c: GrievanceCase): CustodyEvent[] {
       action: 'TrustCheck Advisory Correlated',
       actor: 'NivaranSetu System',
       timestamp: `${baseDate} 10:14:15 UTC`,
-      details: `Integrated findings for suspicious identifier "${c.trustCheckRecord.input}" (${c.trustCheckRecord.resultStatus}).`,
+      details: `Integrated findings for suspicious identifier "${c.trustCheckRecord.input}" (${c.trustCheckRecord.riskLevel.toUpperCase().replace(/_/g, ' ')}).`,
     });
   }
 
   // 3. Evidence ingest events
   c.evidence.forEach((item, idx) => {
+    const cleanHash = item.sha256Hash && item.sha256Hash.trim().length > 0 ? item.sha256Hash.trim() : null;
+    const isSynthetic = !cleanHash || !item.hasBlob;
+
     events.push({
       id: `ev-init-${c.id}-ev-${idx}`,
       caseId: c.id,
       evidenceId: item.id,
       eventType: 'evidence_uploaded',
-      action: `Evidence Uploaded: ${item.fileName}`,
+      action: isSynthetic
+        ? `Synthetic Exhibit Initialized: ${item.fileName}`
+        : `Evidence Uploaded: ${item.fileName}`,
       actor: 'Citizen (Browser Session)',
       timestamp: `${item.uploadDate} 10:15:${(idx * 12).toString().padStart(2, '0')} UTC`,
-      details: `Calculated cryptographic SHA-256 fingerprint: ${item.sha256Hash}. File size: ${item.fileSize}, Category: ${item.category}.`,
-      fileHash: item.sha256Hash,
+      details: isSynthetic
+        ? `Synthetic exhibit metadata initialized (Demonstration Scenario). File size: ${item.fileSize}, Category: ${item.category}. (No physical binary file uploaded).`
+        : `Calculated cryptographic SHA-256 fingerprint: ${cleanHash}. File size: ${item.fileSize}, Category: ${item.category}.`,
+      fileHash: cleanHash,
     });
 
     events.push({
@@ -388,8 +428,8 @@ ${c.evidence
   File Name:    ${ev.fileName}
   Size / MIME:  ${ev.fileSize} · ${ev.fileType}
   Ingest Date:  ${ev.uploadDate}
-  SHA-256:      ${ev.sha256Hash}
-  Integrity:    Verified Original (0 modifications detected)
+  SHA-256:      ${ev.sha256Hash ? ev.sha256Hash : 'Metadata only (Synthetic / No physical binary)'}
+  Integrity:    ${ev.verifiedOriginal ? 'Verified Original (Cryptographic match)' : 'Unverified / Synthetic Exhibit'}
   OCR Entities: ${ev.ocrExtracted.amounts.join(', ') || 'None'} | ${ev.ocrExtracted.dates.join(', ') || 'None'}
 `
   )

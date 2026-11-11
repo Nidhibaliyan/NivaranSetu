@@ -321,7 +321,7 @@ export function generateStatusReminderLetter(
   options?: { citizenName?: string; customAddressee?: string }
 ): string {
   const rule = STATUTORY_RULES[c.category] || STATUTORY_RULES.banking_financial;
-  const name = options?.citizenName || 'Rajesh Joshi';
+  const name = options?.citizenName?.trim() || 'Citizen Complainant';
   const recipient = options?.customAddressee || rule.initialAuthority;
   const docket = c.monitoring?.docketNumber || c.filingDetails?.referenceNumber || '[DOCKET/COMPLAINT REFERENCE NUMBER]';
   const subDate = c.monitoring?.submissionDate || c.filingDetails?.filingDate || c.incidentDate;
@@ -376,7 +376,7 @@ export function generateEscalationPetitionLetter(
   options?: { citizenName?: string; customAddressee?: string }
 ): string {
   const rule = STATUTORY_RULES[c.category] || STATUTORY_RULES.banking_financial;
-  const name = options?.citizenName || 'Rajesh Joshi';
+  const name = options?.citizenName?.trim() || 'Citizen Complainant';
   const recipient = options?.customAddressee || rule.escalationAuthority;
   const docket = c.monitoring?.docketNumber || c.filingDetails?.referenceNumber || '[PREVIOUS DOCKET NUMBER]';
   const subDate = c.monitoring?.submissionDate || c.filingDetails?.filingDate || c.incidentDate;

@@ -383,7 +383,7 @@ export function generatePortalWalkthrough(
                 hi: 'विवादित कटौती दर्शाने वाली बैंक पासबुक या स्टेटमेंट संलग्न करें।'
               },
               caseValue: statementEvidence?.fileName || 'bank_passbook_extract_oct2026.pdf',
-              sourceInCase: `Evidence Item ${statementEvidence?.id || 'EV-2'} (Verified Hash: ${statementEvidence?.sha256Hash.slice(0, 10)}...)`,
+              sourceInCase: `Evidence Item ${statementEvidence?.id || 'EV-2'} (Hash: ${statementEvidence?.sha256Hash ? statementEvidence.sha256Hash.slice(0, 10) + '...' : 'Metadata only'})`,
               isMissing: !statementEvidence,
               fieldType: 'file',
               matchedEvidenceId: statementEvidence?.id || 'ev-2',

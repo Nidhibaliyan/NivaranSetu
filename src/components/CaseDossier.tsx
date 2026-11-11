@@ -3,6 +3,10 @@ import { GrievanceCase } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { exportCaseDossierToPDF } from '../utils/pdfExport';
 import {
+  getTrustCheckBadgeConfig,
+  getTrustCheckSourceLabel,
+} from './TrustCheck';
+import {
   Download,
   Printer,
   Copy,
@@ -24,9 +28,11 @@ import {
   Clock,
   Lock
 } from 'lucide-react';
+import { GuidedNavigationHeader } from './GuidedNavigationHeader';
 
 interface CaseDossierProps {
   currentCase: GrievanceCase;
+  citizenName?: string;
   onNavigateBackToNavigator?: () => void;
   onNavigateBackToBuilder?: () => void;
   onNavigateToMonitoring?: () => void;
@@ -34,11 +40,13 @@ interface CaseDossierProps {
 
 export const CaseDossier: React.FC<CaseDossierProps> = ({
   currentCase,
+  citizenName,
   onNavigateBackToNavigator,
   onNavigateBackToBuilder,
   onNavigateToMonitoring,
 }) => {
   const { mode } = useLanguage();
+  const effectiveCitizenName = citizenName?.trim() || 'Citizen Complainant';
   const [copiedDraft, setCopiedDraft] = useState(false);
   const [isExportingPDF, setIsExportingPDF] = useState(false);
   const [exportSuccessMessage, setExportSuccessMessage] = useState<string | null>(null);
@@ -58,7 +66,7 @@ export const CaseDossier: React.FC<CaseDossierProps> = ({
     try {
       exportCaseDossierToPDF(currentCase, {
         mode,
-        citizenName: 'Rajesh Joshi',
+        citizenName: effectiveCitizenName,
       });
       setExportSuccessMessage(
         `PDF dossier for ${currentCase.id} exported successfully! Saved to your downloads.`
@@ -84,6 +92,7 @@ Date Generated: ${new Date().toISOString()}
 
 1. EXECUTIVE CASE SUMMARY
 -------------------------
+Complainant: ${effectiveCitizenName}
 Subject: ${currentCase.title}
 Category: ${currentCase.category.replace(/_/g, ' ').toUpperCase()}
 Involved Party: ${currentCase.involvedEntity}
@@ -148,6 +157,20 @@ Generated via NivaranSetu Grievance Intelligence Platform
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
       
+      {/* 0. GUIDED NAVIGATION HEADER */}
+      <GuidedNavigationHeader
+        badgeLabel={`CASE ${currentCase.id}`}
+        stepTitle="Stage 7: Complete Case Dossier & Cryptographic Package"
+        instruction={`Review and export your comprehensive evidence synthesis, timeline, formal complaint statement, and append-only chain-of-custody ledger for ${currentCase.recommendedAuthority.portalName}.`}
+        progressPercent={100}
+        onBack={onNavigateBackToNavigator || onNavigateBackToBuilder}
+        backLabel="Back to Navigator"
+        onContinue={handleDownloadPDF}
+        continueLabel="Download Official PDF"
+        onExit={onNavigateToMonitoring}
+        exitLabel={onNavigateToMonitoring ? 'Case Monitoring' : undefined}
+      />
+
       {/* Header with Print / Export Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-5">
         <div>
@@ -367,36 +390,60 @@ Generated via NivaranSetu Grievance Intelligence Platform
           <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
             04. TrustCheck Identifier Findings & Source References
           </h3>
-          <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-3 text-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-2.5">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-zinc-900 dark:text-white">
-                  Investigated Identifier: refund-desk99@oksbi (UPI VPA)
-                </span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-950/70 dark:text-red-400 font-bold">
-                  Verified adverse match
-                </span>
+          {currentCase.trustCheckRecord ? (
+            <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-zinc-900 dark:text-white">
+                    Investigated Identifier: {currentCase.trustCheckRecord.input} ({currentCase.trustCheckRecord.type.toUpperCase()})
+                  </span>
+                  {(() => {
+                    const badge = getTrustCheckBadgeConfig(
+                      currentCase.trustCheckRecord.riskLevel,
+                      currentCase.trustCheckRecord.resultStatus
+                    );
+                    const source = getTrustCheckSourceLabel(currentCase.trustCheckRecord);
+                    return (
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${badge.badgeClass}`}
+                        >
+                          {badge.text}
+                        </span>
+                        <span className={source.className}>
+                          {source.text}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </div>
+                {currentCase.trustCheckRecord.lastChecked && (
+                  <span className="text-[10px] font-mono text-zinc-400">
+                    Checked: {currentCase.trustCheckRecord.lastChecked}
+                  </span>
+                )}
               </div>
-              <span className="text-[10px] font-mono text-zinc-400">
-                Indexed in Public Warning Registries
-              </span>
-            </div>
 
-            <p className="text-zinc-700 dark:text-zinc-300 leading-relaxed text-xs">
-              Identifier matched active consumer warning alerts on National Cybercrime Portal (1930) and RBI Sachet fraud matrix. Unregistered collect request pattern mimicking corporate refund handle.
-            </p>
+              <p className="text-zinc-700 dark:text-zinc-300 leading-relaxed text-xs">
+                {currentCase.trustCheckRecord.description}
+              </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-zinc-500 font-mono">
-              <div className="flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-[#007FFF]" />
-                <span>Ref 1: National Cyber Crime Portal Bulletin #2026-DISCOM</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-[#007FFF]" />
-                <span>Ref 2: RBI Sachet Public Caution Notice on VPA Spoofing</span>
-              </div>
+              {currentCase.trustCheckRecord.sourceReferences && currentCase.trustCheckRecord.sourceReferences.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-zinc-500 font-mono pt-1">
+                  {currentCase.trustCheckRecord.sourceReferences.map((ref, rIdx) => (
+                    <div key={rIdx} className="flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5 text-[#007FFF] shrink-0" />
+                      <span>{ref}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
+          ) : (
+            <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500">
+              No pre-screening TrustCheck identifier was recorded for this grievance. The complaint was initiated directly from incident facts.
+            </div>
+          )}
         </div>
 
         {/* 5. Evidence-to-Claim Mapping & Readiness Assessment */}
@@ -404,27 +451,28 @@ Generated via NivaranSetu Grievance Intelligence Platform
           <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
             05. Evidence-to-Claim Mapping & Procedural Readiness
           </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 space-y-2">
-              <div className="font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                <span>Claim 1: Unauthorized Transaction Loss</span>
-              </div>
-              <p className="text-zinc-600 dark:text-zinc-400 text-[11px]">
-                Mapped to Exhibit 01 (Bank Statement with UTR timestamps). Proves exact loss of ₹{currentCase.disputedAmount?.toLocaleString('en-IN')}.
-              </p>
+          {currentCase.evidence && currentCase.evidence.filter((ev) => ev.claimMappedTo && ev.claimMappedTo.trim()).length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              {currentCase.evidence
+                .filter((ev) => ev.claimMappedTo && ev.claimMappedTo.trim())
+                .map((ev, idx) => (
+                  <div key={ev.id || idx} className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 space-y-2">
+                    <div className="font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span>{ev.claimMappedTo}</span>
+                    </div>
+                    <p className="text-zinc-600 dark:text-zinc-400 text-[11px]">
+                      Substantiated by Exhibit Ex-0{idx + 1}: <strong className="text-zinc-800 dark:text-zinc-200">{ev.title}</strong> ({ev.fileName}).
+                      {ev.verifiedOriginal ? ' (Cryptographically verified original)' : ' (Preserved exhibit)'}
+                    </p>
+                  </div>
+                ))}
             </div>
-
-            <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 space-y-2">
-              <div className="font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                <span>Claim 2: Zero Liability 3-Day Notice</span>
-              </div>
-              <p className="text-zinc-600 dark:text-zinc-400 text-[11px]">
-                Mapped to Exhibit 02 (Customer Support Call Record & Cybercrime 1930 Acknowledgement). Satisfies statutory notification rules.
-              </p>
+          ) : (
+            <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs text-zinc-500">
+              No specific exhibit-to-claim mappings defined. All {(currentCase.evidence || []).length} evidence exhibits are catalogued in the chronological exhibit index above.
             </div>
-          </div>
+          )}
         </div>
 
         {/* 6. Recommended Authority & Filing Instructions */}
