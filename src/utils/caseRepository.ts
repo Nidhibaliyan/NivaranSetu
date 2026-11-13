@@ -12,6 +12,7 @@ import {
   CustodyEvent,
   CaseMonitoringData,
   NavigatorSession,
+  OcrStatus,
 } from '../types';
 import {
   caseToRow,
@@ -28,7 +29,23 @@ import {
   rowToNavigatorSession,
   assertValidUserUuid,
   assertValidCaseId,
+  EvidenceItemRow,
 } from './caseMappers';
+
+function normalizeOcrExtracted(
+  ocr: any,
+  explicitStatus?: OcrStatus
+): EvidenceItemRow['ocr_extracted'] {
+  const effectiveOcrStatus = explicitStatus || ocr?.status;
+  return {
+    dates: Array.isArray(ocr?.dates) ? ocr.dates : [],
+    amounts: Array.isArray(ocr?.amounts) ? ocr.amounts : [],
+    identifiers: Array.isArray(ocr?.identifiers) ? ocr.identifiers : [],
+    parties: Array.isArray(ocr?.parties) ? ocr.parties : [],
+    summary: typeof ocr?.summary === 'string' ? ocr.summary : '',
+    ...(effectiveOcrStatus ? { status: effectiveOcrStatus } : {}),
+  };
+}
 
 /**
  * Obtains the authoritative user UUID strictly from the verified Supabase Auth session.
@@ -254,14 +271,9 @@ export async function saveCase(caseData: GrievanceCase, client: SupabaseClient =
           mutableUpdates.raw_ocr_text = cleanOcrText;
         }
 
-        const currentOcrExtracted = {
-          dates: Array.isArray(ev.ocrExtracted?.dates) ? ev.ocrExtracted.dates : [],
-          amounts: Array.isArray(ev.ocrExtracted?.amounts) ? ev.ocrExtracted.amounts : [],
-          identifiers: Array.isArray(ev.ocrExtracted?.identifiers) ? ev.ocrExtracted.identifiers : [],
-          parties: Array.isArray(ev.ocrExtracted?.parties) ? ev.ocrExtracted.parties : [],
-          summary: ev.ocrExtracted?.summary || '',
-        };
-        if (JSON.stringify(currentOcrExtracted) !== JSON.stringify(existing.ocr_extracted || {})) {
+        const currentOcrExtracted = normalizeOcrExtracted(ev.ocrExtracted, ev.ocrStatus);
+        const existingOcrExtracted = normalizeOcrExtracted(existing.ocr_extracted);
+        if (JSON.stringify(currentOcrExtracted) !== JSON.stringify(existingOcrExtracted)) {
           mutableUpdates.ocr_extracted = currentOcrExtracted;
         }
 

@@ -510,6 +510,330 @@ async function runTests() {
     assert(evUpdateCalls.length === 0, '3.6: Existing unchanged exhibit was safely skipped with 0 updates');
 
     // =========================================================================
+    // SECTION 3B: OCR Status Persistence (Insert -> Update -> Reload) & JSONB Key-Order Insensitivity
+    // =========================================================================
+    console.log('\n--- SECTION 3B: OCR Status Persistence (Insert -> Update -> Reload) ---');
+
+    // Simulates PostgreSQL JSONB key ordering (key length first, then lexicographical)
+    const toPostgresJsonbOrder = (obj: Record<string, any>) => {
+      const sorted: Record<string, any> = {};
+      Object.keys(obj)
+        .sort((a, b) => a.length - b.length || a.localeCompare(b))
+        .forEach((k) => {
+          sorted[k] = obj[k];
+        });
+      return sorted;
+    };
+
+    const statusesToVerify: Array<'pending' | 'processed' | 'no_text' | 'failed'> = [
+      'pending',
+      'processed',
+      'no_text',
+      'failed',
+    ];
+    const validHash64 = 'b'.repeat(64);
+
+    for (const ocrStatus of statusesToVerify) {
+      let storedCaseRow: any = null;
+      let storedEvidenceRows: any[] = [];
+      let cycleInsertCount = 0;
+      let cycleUpdateCount = 0;
+
+      supabase.from = ((tableName: string) => {
+        if (tableName === 'grievance_cases') {
+          return createMockQueryBuilder({
+            selectData: storedCaseRow ? [storedCaseRow] : [],
+            onUpsert: (payload) => {
+              storedCaseRow = payload;
+            },
+          });
+        }
+        if (tableName === 'evidence_items') {
+          return createMockQueryBuilder({
+            selectData: storedEvidenceRows.map((row) => ({
+              ...row,
+              ocr_extracted: toPostgresJsonbOrder(row.ocr_extracted || {}),
+            })),
+            onInsert: (payload) => {
+              cycleInsertCount++;
+              storedEvidenceRows.push({
+                ...payload,
+                ocr_extracted: toPostgresJsonbOrder(payload.ocr_extracted || {}),
+              });
+            },
+            onUpdate: (payload) => {
+              cycleUpdateCount++;
+              storedEvidenceRows = storedEvidenceRows.map((row) => ({
+                ...row,
+                ...payload,
+                ocr_extracted: toPostgresJsonbOrder(payload.ocr_extracted || row.ocr_extracted || {}),
+              }));
+            },
+          });
+        }
+        return createMockQueryBuilder({ selectData: [] });
+      }) as any;
+
+      const isProcessed = ocrStatus === 'processed';
+      const exhibitForStatus: EvidenceItem = {
+        id: `ev-status-${ocrStatus}`,
+        title: `Exhibit ${ocrStatus}`,
+        category: 'receipt',
+        fileName: `${ocrStatus}.jpg`,
+        fileSize: '512 KB',
+        fileSizeBytes: 524288,
+        fileType: 'image/jpeg',
+        uploadDate: '2026-11-12',
+        sha256Hash: validHash64,
+        storageRef: `${TEST_USER_A}/${TEST_CASE_ID}/ev-status-${ocrStatus}/${ocrStatus}.jpg`,
+        hasBlob: true,
+        rawOcrText: isProcessed ? 'UTR 99887766 Amount INR 1500' : undefined,
+        ocrStatus,
+        ocrExtracted: isProcessed
+          ? {
+              dates: ['2026-11-12'],
+              amounts: ['₹1,500'],
+              identifiers: ['UTR 99887766'],
+              parties: ['Merchant A'],
+              summary: 'Payment receipt',
+              status: ocrStatus,
+            }
+          : {
+              dates: [],
+              amounts: [],
+              identifiers: [],
+              parties: [],
+              summary: '',
+              status: ocrStatus,
+            },
+        claimMappedTo: isProcessed ? 'rec_receipt' : undefined,
+        flag: isProcessed ? { type: 'verified', message: 'OCR matched' } : undefined,
+        verifiedOriginal: false,
+      };
+
+      const statusCase: GrievanceCase = {
+        ...mockCase,
+        evidence: [exhibitForStatus],
+        timeline: [],
+        custodyEvents: [],
+        monitoring: undefined,
+      };
+
+      // 1. Initial insert
+      await saveCase(statusCase);
+      assert(
+        cycleInsertCount === 1 && storedEvidenceRows[0]?.ocr_extracted?.status === ocrStatus,
+        `3B.${ocrStatus}: Initial saveCase inserts ocr_extracted.status="${ocrStatus}"`
+      );
+
+      // 2. Subsequent unrelated case update (exhibit unchanged, DB returns JSONB-reordered keys)
+      cycleInsertCount = 0;
+      cycleUpdateCount = 0;
+      await saveCase({
+        ...statusCase,
+        description: `Updated narrative while keeping ${ocrStatus} exhibit unchanged`,
+      });
+      assert(
+        cycleInsertCount === 0 && cycleUpdateCount === 0,
+        `3B.${ocrStatus}: Unchanged exhibit (with JSONB key reordering) triggers 0 evidence_items updates`,
+        { cycleInsertCount, cycleUpdateCount },
+        { cycleInsertCount: 0, cycleUpdateCount: 0 }
+      );
+      assert(
+        storedEvidenceRows[0]?.ocr_extracted?.status === ocrStatus,
+        `3B.${ocrStatus}: Subsequent saveCase does not erase ocr_extracted.status`
+      );
+
+      // 3. Reload via fetchCases (rowToEvidence)
+      const reloaded = await fetchCases();
+      const reloadedEv = reloaded[0]?.evidence?.[0];
+      assert(
+        reloadedEv?.ocrStatus === ocrStatus && reloadedEv?.ocrExtracted?.status === ocrStatus,
+        `3B.${ocrStatus}: fetchCases/rowToEvidence restores ocrStatus and ocrExtracted.status="${ocrStatus}"`,
+        { ocrStatus: reloadedEv?.ocrStatus, nested: reloadedEv?.ocrExtracted?.status },
+        { ocrStatus, nested: ocrStatus }
+      );
+      assert(
+        reloadedEv?.sha256Hash === validHash64 &&
+          reloadedEv?.storageRef === exhibitForStatus.storageRef &&
+          reloadedEv?.hasBlob === true &&
+          reloadedEv?.claimMappedTo === exhibitForStatus.claimMappedTo,
+        `3B.${ocrStatus}: Existing evidence fields (hash, storageRef, hasBlob, claimMappedTo) remain intact`
+      );
+    }
+
+    // 3B.5: Status transitions via saveCase update (pending -> no_text -> failed -> processed)
+    {
+      let storedCaseRow: any = null;
+      let storedEvidenceRows: any[] = [];
+      let transitionUpdatePayloads: any[] = [];
+      let custodyRows: any[] = [];
+
+      supabase.from = ((tableName: string) => {
+        if (tableName === 'grievance_cases') {
+          return createMockQueryBuilder({
+            selectData: storedCaseRow ? [storedCaseRow] : [],
+            onUpsert: (payload) => {
+              storedCaseRow = payload;
+            },
+          });
+        }
+        if (tableName === 'evidence_items') {
+          return createMockQueryBuilder({
+            selectData: storedEvidenceRows.map((row) => ({
+              ...row,
+              ocr_extracted: toPostgresJsonbOrder(row.ocr_extracted || {}),
+            })),
+            onInsert: (payload) => {
+              storedEvidenceRows.push({
+                ...payload,
+                ocr_extracted: toPostgresJsonbOrder(payload.ocr_extracted || {}),
+              });
+            },
+            onUpdate: (payload) => {
+              transitionUpdatePayloads.push(payload);
+              storedEvidenceRows = storedEvidenceRows.map((row) => ({
+                ...row,
+                ...payload,
+                ocr_extracted: toPostgresJsonbOrder(payload.ocr_extracted || row.ocr_extracted || {}),
+              }));
+            },
+          });
+        }
+        if (tableName === 'custody_events') {
+          return createMockQueryBuilder({
+            selectData: custodyRows,
+            onInsert: (payload) => custodyRows.push(payload),
+          });
+        }
+        return createMockQueryBuilder({ selectData: [] });
+      }) as any;
+
+      const baseExhibit: EvidenceItem = {
+        id: 'ev-transition-1',
+        title: 'Transition Exhibit',
+        category: 'screenshot',
+        fileName: 'photo.jpg',
+        fileSize: '256 KB',
+        fileSizeBytes: 262144,
+        fileType: 'image/jpeg',
+        uploadDate: '2026-11-12',
+        sha256Hash: validHash64,
+        storageRef: `${TEST_USER_A}/${TEST_CASE_ID}/ev-transition-1/photo.jpg`,
+        hasBlob: true,
+        ocrStatus: 'pending',
+        ocrExtracted: { dates: [], amounts: [], identifiers: [], parties: [], summary: '', status: 'pending' },
+        verifiedOriginal: false,
+      };
+
+      const transitionCase: GrievanceCase = {
+        ...mockCase,
+        evidence: [baseExhibit],
+        timeline: [],
+        custodyEvents: [
+          {
+            id: 'ce-upload-transition',
+            caseId: TEST_CASE_ID,
+            evidenceId: 'ev-transition-1',
+            eventType: 'evidence_uploaded',
+            action: 'Uploaded photo.jpg',
+            actor: 'Citizen (Browser Session)',
+            timestamp: '2026-11-12T10:00:00.000Z',
+            details: 'Uploaded with SHA-256',
+            fileHash: validHash64,
+          },
+        ],
+        monitoring: undefined,
+      };
+
+      // Insert as pending
+      await saveCase(transitionCase);
+
+      // Transition pending -> no_text (testing top-level ocrStatus precedence matching evidenceToRow)
+      transitionUpdatePayloads = [];
+      await saveCase({
+        ...transitionCase,
+        evidence: [
+          {
+            ...baseExhibit,
+            ocrStatus: 'no_text',
+            // intentionally leave nested status stale as 'pending' to verify precedence matches evidenceToRow
+            ocrExtracted: { ...baseExhibit.ocrExtracted, status: 'pending' },
+          },
+        ],
+      });
+      assert(
+        transitionUpdatePayloads.length === 1 &&
+          transitionUpdatePayloads[0].ocr_extracted?.status === 'no_text',
+        '3B.5a: Transition pending -> no_text persists status="no_text" with top-level ocrStatus precedence'
+      );
+      let reloadedAfterTransition = await fetchCases();
+      assert(
+        reloadedAfterTransition[0]?.evidence[0]?.ocrStatus === 'no_text' &&
+          reloadedAfterTransition[0]?.evidence[0]?.ocrExtracted.status === 'no_text',
+        '3B.5b: Reload after pending -> no_text restores "no_text"'
+      );
+
+      // Transition no_text -> failed
+      transitionUpdatePayloads = [];
+      await saveCase({
+        ...transitionCase,
+        evidence: [
+          {
+            ...baseExhibit,
+            ocrStatus: 'failed',
+            ocrExtracted: { dates: [], amounts: [], identifiers: [], parties: [], summary: '', status: 'failed' },
+          },
+        ],
+      });
+      assert(
+        transitionUpdatePayloads.length === 1 &&
+          transitionUpdatePayloads[0].ocr_extracted?.status === 'failed',
+        '3B.5c: Transition no_text -> failed persists status="failed"'
+      );
+      reloadedAfterTransition = await fetchCases();
+      assert(
+        reloadedAfterTransition[0]?.evidence[0]?.ocrStatus === 'failed',
+        '3B.5d: Reload after no_text -> failed restores "failed"'
+      );
+
+      // Transition failed -> processed
+      transitionUpdatePayloads = [];
+      await saveCase({
+        ...transitionCase,
+        evidence: [
+          {
+            ...baseExhibit,
+            rawOcrText: 'Extracted Receipt #7721 Amount ₹3,200',
+            ocrStatus: 'processed',
+            ocrExtracted: {
+              dates: ['2026-11-12'],
+              amounts: ['₹3,200'],
+              identifiers: ['7721'],
+              parties: ['Bank X'],
+              summary: 'Receipt parsed',
+              status: 'processed',
+            },
+          },
+        ],
+      });
+      assert(
+        transitionUpdatePayloads.length === 1 &&
+          transitionUpdatePayloads[0].ocr_extracted?.status === 'processed' &&
+          transitionUpdatePayloads[0].raw_ocr_text === 'Extracted Receipt #7721 Amount ₹3,200',
+        '3B.5e: Transition failed -> processed persists status="processed" and raw_ocr_text'
+      );
+      reloadedAfterTransition = await fetchCases();
+      assert(
+        reloadedAfterTransition[0]?.evidence[0]?.ocrStatus === 'processed' &&
+          reloadedAfterTransition[0]?.evidence[0]?.ocrExtracted.status === 'processed' &&
+          reloadedAfterTransition[0]?.custodyEvents.length === 1 &&
+          reloadedAfterTransition[0]?.custodyEvents[0]?.fileHash === validHash64,
+        '3B.5f: Reload after failed -> processed restores "processed" and preserves custody event & fileHash'
+      );
+    }
+
+    // =========================================================================
     // SECTION 4: Append-Only Custody Immutability & Safe Retries
     // =========================================================================
     console.log('\n--- SECTION 4: Append-Only Custody Immutability & Safe Retries ---');

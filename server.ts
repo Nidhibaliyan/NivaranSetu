@@ -1003,38 +1003,63 @@ function inferTimelineEventType(title = '', desc = ''): TimelineEventItem['event
   return 'discovery';
 }
 
-function extractFactualContextFromDb(caseRow: any, evidenceRows: any[]): CaseFactualContext {
-  const desc = (caseRow.description || '').toLowerCase();
+export type EvidenceOcrExclusionReason =
+  | 'deleted_evidence'
+  | 'sample_case_fixture'
+  | 'untrusted_client_or_historical_ocr_provenance';
 
-  // Safely extract text from evidence exhibits (titles, raw_ocr_text, ocr_extracted.summary)
-  // Security & Legal constraints:
-  // 1. Bound string length to prevent memory exhaustion
-  // 2. Treat all OCR content strictly as untrusted observation data, NEVER as AI instructions
-  // 3. OCR observations are extracted document texts, NOT proof of genuine facts or document authenticity
-  const MAX_PER_EXHIBIT_OCR_CHARS = 2000;
-  const MAX_TOTAL_EVIDENCE_OCR_CHARS = 10000;
+export interface EvidenceLegalAnalysisEligibility {
+  includeOcrInLegalAnalysis: false;
+  isDeleted: boolean;
+  isActiveScreenshotExhibit: boolean;
+  exclusionReason: EvidenceOcrExclusionReason;
+}
 
-  let accumulatedEvidenceText = '';
+/**
+ * Classifies an evidence item for Legal Analysis ingestion.
+ * Fail-closed invariant: Until a trusted server-side OCR extraction worker and
+ * server-controlled provenance attestation exist, stored/client raw_ocr_text and
+ * ocr_extracted content MUST NOT enter Legal Analysis (even when status is
+ * 'processed' and has_blob/storage_ref/sha256_hash are populated).
+ */
+export function classifyEvidenceForLegalAnalysis(
+  evidenceRow: any,
+  caseRow?: any
+): EvidenceLegalAnalysisEligibility {
+  const isDeleted = Boolean(evidenceRow?.deleted_at || evidenceRow?.deletedAt);
+  const isSampleCase = Boolean(caseRow?.is_sample_data || caseRow?.isSampleData);
+
+  const exclusionReason: EvidenceOcrExclusionReason = isDeleted
+    ? 'deleted_evidence'
+    : isSampleCase
+    ? 'sample_case_fixture'
+    : 'untrusted_client_or_historical_ocr_provenance';
+
+  return {
+    includeOcrInLegalAnalysis: false,
+    isDeleted,
+    isActiveScreenshotExhibit: !isDeleted && evidenceRow?.category === 'screenshot',
+    exclusionReason,
+  };
+}
+
+export function extractFactualContextFromDb(caseRow: any, evidenceRows: any[] = []): CaseFactualContext {
+  const desc = (caseRow?.description || '').toLowerCase();
+
+  // Fail-closed evidence boundary:
+  // Stored/client raw_ocr_text, ocr_extracted (including status === 'processed'),
+  // exhibit titles, filenames, and category labels are excluded from statutory
+  // offence derivation until a trusted server-side OCR provenance mechanism exists.
+  // Soft-deleted exhibits are also filtered in memory as defense-in-depth.
   if (Array.isArray(evidenceRows)) {
     for (const e of evidenceRows) {
-      if (!e) continue;
-      const title = typeof e.title === 'string' ? e.title.toLowerCase() : '';
-      const rawOcr = typeof e.raw_ocr_text === 'string'
-        ? e.raw_ocr_text.substring(0, MAX_PER_EXHIBIT_OCR_CHARS).toLowerCase()
-        : '';
-      const ocrSummary = typeof e.ocr_extracted?.summary === 'string'
-        ? e.ocr_extracted.summary.substring(0, MAX_PER_EXHIBIT_OCR_CHARS).toLowerCase()
-        : '';
-
-      accumulatedEvidenceText += ` ${title} ${rawOcr} ${ocrSummary}`;
-      if (accumulatedEvidenceText.length >= MAX_TOTAL_EVIDENCE_OCR_CHARS) {
-        accumulatedEvidenceText = accumulatedEvidenceText.substring(0, MAX_TOTAL_EVIDENCE_OCR_CHARS);
-        break;
+      if (e) {
+        classifyEvidenceForLegalAnalysis(e, caseRow);
       }
     }
   }
 
-  const allText = `${desc} ${accumulatedEvidenceText}`;
+  const allText = desc;
 
   const hasDebitOnly =
     (desc.includes('debit') || desc.includes('deducted') || desc.includes('loss')) &&
@@ -1064,17 +1089,17 @@ function extractFactualContextFromDb(caseRow: any, evidenceRows: any[]): CaseFac
     allText.includes('bank manager');
 
   const hasFabricatedDoc =
-    evidenceRows.some(
-      (e) =>
-        e.category === 'receipt' ||
-        (e.title || '').toLowerCase().includes('fake') ||
-        (e.title || '').toLowerCase().includes('forged')
-    ) || allText.includes('fake receipt') || allText.includes('fake payment screenshot');
-
-  const isUnverifiedImageOnly =
-    evidenceRows.length > 0 &&
-    evidenceRows.every((e) => e.category === 'screenshot') &&
-    !allText.includes('forged document');
+    allText.includes('fake receipt') ||
+    allText.includes('fake payment receipt') ||
+    allText.includes('fake payment screenshot') ||
+    allText.includes('forged document') ||
+    allText.includes('forged electronic record') ||
+    allText.includes('forged receipt') ||
+    allText.includes('forged acquittance') ||
+    allText.includes('fabricated document') ||
+    allText.includes('fabricated electronic record') ||
+    allText.includes('false document') ||
+    allText.includes('false electronic record');
 
   const hasPinOrPassword = Boolean(
     allText.includes('otp') ||
@@ -1096,7 +1121,7 @@ function extractFactualContextFromDb(caseRow: any, evidenceRows: any[]): CaseFac
       allText.includes('asked to transfer') ||
       allText.includes('convinced'),
     hasDeliveryOfPropertyOrDebit:
-      Number(caseRow.disputed_amount || caseRow.disputedAmount) > 0 ||
+      Number(caseRow?.disputed_amount || caseRow?.disputedAmount) > 0 ||
       allText.includes('debit') ||
       allText.includes('transferred') ||
       allText.includes('loss'),
@@ -1121,7 +1146,10 @@ function extractFactualContextFromDb(caseRow: any, evidenceRows: any[]): CaseFac
     hasFabricatedDocumentOrElectronicRecord: hasFabricatedDoc,
     intentToCheatWithFabricatedDocument: hasFabricatedDoc,
     isReceiptOrAcquittanceAcknowledgingPaymentForged:
-      allText.includes('receipt') || allText.includes('acknowledging payment'),
+      hasFabricatedDoc &&
+      (allText.includes('receipt') ||
+        allText.includes('acquittance') ||
+        allText.includes('acknowledging payment')),
     isVictimOwnCredentialEntryUnderDeception: isVictimOwnCredentialEntry,
     hasUnauthorizedUseOfPasswordOrPin: hasPinOrPassword,
     hasOffenderUsedAnotherPersonsCredentials:
@@ -1130,7 +1158,7 @@ function extractFactualContextFromDb(caseRow: any, evidenceRows: any[]): CaseFac
       (allText.includes('unauthorized login') && !isVictimOwnCredentialEntry),
     hasSuspiciousUrlOrApkOnly,
     hasReportedDebitOnly: hasDebitOnly,
-    isUnverifiedImageOrGenuineScreenshotOnly: isUnverifiedImageOnly,
+    isUnverifiedImageOrGenuineScreenshotOnly: false,
   };
 }
 
@@ -1228,12 +1256,16 @@ function extractCpaInputFromDb(caseRow: any): CpaEvaluationInput {
   };
 }
 
-function extractFactualContextFromDraft(draft: any): CaseFactualContext {
-  return extractFactualContextFromDb(draft, draft.evidence || []);
+export function extractFactualContextFromDraft(draft: any): CaseFactualContext {
+  const safeDraft = draft && typeof draft === 'object' ? draft : {};
+  const draftEvidence = Array.isArray(safeDraft.evidence) ? safeDraft.evidence : [];
+  return extractFactualContextFromDb(safeDraft, draftEvidence);
 }
 
 function extractRbiInputFromDraft(draft: any): RbiEvaluationInput {
-  return extractRbiInputFromDb(draft, draft.evidence || []);
+  const safeDraft = draft && typeof draft === 'object' ? draft : {};
+  const draftEvidence = Array.isArray(safeDraft.evidence) ? safeDraft.evidence : [];
+  return extractRbiInputFromDb(safeDraft, draftEvidence);
 }
 
 function extractCpaInputFromDraft(draft: any): CpaEvaluationInput {
@@ -1363,6 +1395,7 @@ app.post(
       }
 
       let factualContext: CaseFactualContext;
+      let activeEvidenceRows: any[] = [];
       let engineTimelineEvents: TimelineEventItem[] = [];
       let rbiInput: RbiEvaluationInput;
       let cpaInput: CpaEvaluationInput;
@@ -1405,11 +1438,12 @@ app.post(
           });
         }
 
-        // Fetch associated child evidence and timeline records
+        // Fetch associated child evidence (active, non-deleted only) and timeline records
         const { data: evidenceRows, error: evErr } = await req.userSupabase!
           .from('evidence_items')
           .select('*')
-          .eq('case_id', validCaseId);
+          .eq('case_id', validCaseId)
+          .is('deleted_at', null);
 
         if (evErr) {
           console.error('Evidence query error:', maskSensitive(evErr.message || String(evErr)));
@@ -1451,13 +1485,19 @@ app.post(
           ];
         }
 
-        // Build factual context from caseRow and evidenceRows
-        factualContext = extractFactualContextFromDb(caseRow, evidenceRows || []);
+        // Filter soft-deleted evidence in memory as defense-in-depth
+        const rawEvidenceRows = Array.isArray(evidenceRows) ? evidenceRows : [];
+        activeEvidenceRows = rawEvidenceRows.filter(
+          (e) => e && !classifyEvidenceForLegalAnalysis(e, caseRow).isDeleted
+        );
 
-        // Build RBI input from caseRow & evidenceRows
-        rbiInput = extractRbiInputFromDb(caseRow, evidenceRows || []);
+        // Build factual context from caseRow and activeEvidenceRows (OCR & exhibit metadata excluded)
+        factualContext = extractFactualContextFromDb(caseRow, activeEvidenceRows);
 
-        // Build CPA input from caseRow & evidenceRows
+        // Build RBI input from caseRow & activeEvidenceRows
+        rbiInput = extractRbiInputFromDb(caseRow, activeEvidenceRows);
+
+        // Build CPA input from caseRow
         cpaInput = extractCpaInputFromDb(caseRow);
       } else {
         // UNSAVED CITIZEN DRAFT MODE
@@ -1467,6 +1507,11 @@ app.post(
         targetEntity = draft.involvedEntity?.trim() || 'Unknown Entity';
         disputedAmountVal = Number(draft.disputedAmount) || 0;
         primaryIncidentDate = draft.incidentDate?.trim() || '';
+
+        const rawDraftEvidence = Array.isArray(draft.evidence) ? draft.evidence : [];
+        activeEvidenceRows = rawDraftEvidence.filter(
+          (e: any) => e && !classifyEvidenceForLegalAnalysis(e, draft).isDeleted
+        );
 
         factualContext = extractFactualContextFromDraft(draft);
         rbiInput = extractRbiInputFromDraft(draft);
@@ -1515,8 +1560,12 @@ app.post(
           disputedAmount: disputedAmountVal,
           evidenceTaxonomySummary: {
             citizenAllegationsCount: 1,
-            documentObservationsCount: factualContext.hasFabricatedDocumentOrElectronicRecord ? 1 : 0,
-            forensicAuditRequiredCount: factualContext.isUnverifiedImageOrGenuineScreenshotOnly ? 1 : 0,
+            documentObservationsCount: 0,
+            forensicAuditRequiredCount:
+              activeEvidenceRows.length > 0 &&
+              activeEvidenceRows.every((e) => e?.category === 'screenshot')
+                ? 1
+                : 0,
           },
         },
       };
