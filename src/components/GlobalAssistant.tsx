@@ -54,7 +54,7 @@ interface ChatMessage {
   };
 }
 
-type ModelType = 'gemini-3.8-flash' | 'gemini-4-argon' | 'gemini-3.1-flash-lite';
+type ModelType = 'gemini-4-hydrogen' | 'gemini-4-argon' | 'gemini-3.1-flash-lite';
 
 export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTab }) => {
   const { language } = useLanguage();
@@ -64,8 +64,8 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
   const [isLoading, setIsLoading] = useState(false);
 
   // Model selection state
-  // gemini-3.8-flash for general tasks, gemini-4-argon for complex legal tasks, gemini-3.1-flash-lite for fast tasks
-  const [selectedModel, setSelectedModel] = useState<ModelType>('gemini-3.8-flash');
+  // gemini-4-hydrogen for general tasks, gemini-4-argon for complex legal tasks, gemini-3.1-flash-lite for fast tasks
+  const [selectedModel, setSelectedModel] = useState<ModelType>('gemini-4-hydrogen');
 
   // Audio transcription with gemini-3.5-transcribe
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -102,7 +102,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
       sender: 'assistant',
       text: "Hello! I'm your NivaranSetu assistant. Tell me what happened in your own words. I'll help you understand what to do next.",
       timestamp: 'Just now',
-      modelUsed: 'gemini-3.8-flash',
+      modelUsed: 'gemini-4-hydrogen',
     },
   ]);
 
@@ -856,15 +856,15 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
               <span className="text-zinc-500 font-medium">Gemini Model:</span>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => setSelectedModel('gemini-3.8-flash')}
+                  onClick={() => setSelectedModel('gemini-4-hydrogen')}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                    selectedModel === 'gemini-3.8-flash'
+                    selectedModel === 'gemini-4-hydrogen'
                       ? 'bg-[#007FFF] text-white shadow-xs'
                       : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800'
                   }`}
-                  title="gemini-3.8-flash: Primary standard for general grievance analysis"
+                  title="gemini-4-hydrogen: Primary standard for general grievance analysis"
                 >
-                  General (3.8 Flash)
+                  General (4 Hydrogen)
                 </button>
                 <button
                   onClick={() => setSelectedModel('gemini-4-argon')}

@@ -242,7 +242,7 @@ async function startProductionServer(options: {
         if (res.status === 200) {
           const data = await res.json().catch(() => null);
           // Confirm server ownership: response must match NivaranSetu server.ts status signature
-          if (data?.status === 'ok' && data?.models?.default === 'gemini-3.8-flash') {
+          if (data?.status === 'ok' && data?.models?.default === 'gemini-4-hydrogen') {
             // Confirm the spawned child is still actively running
             if (child.exitCode === null) {
               isReady = true;

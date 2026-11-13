@@ -27,6 +27,7 @@ import {
   createRequestScopedClient,
   verifySupabaseAuth,
   resolveSupabaseConfig,
+  resolveModelCandidates,
   AuthenticatedRequest,
 } from '../server';
 
@@ -847,6 +848,85 @@ async function main() {
         assert.ok(data?.synthesis?.includes('Financial Crime Legal Analysis'));
         assert.ok(data?.findings?.temporalJurisdiction?.status === 'GOVERNED_BY_BNS_2023');
         assert.ok(data?.findings?.rbiCommercialBanksProtection?.isCommercialBankCovered === true);
+      } finally {
+        delete app.locals.supabaseAuthClient;
+        delete app.locals.geminiAiClient;
+      }
+    });
+
+    await runTest('8.5: resolveModelCandidates uses canonical gemini-4-hydrogen and excludes paid-only models by default', () => {
+      assert.deepStrictEqual(resolveModelCandidates(undefined, 'complex'), ['gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
+      assert.deepStrictEqual(resolveModelCandidates(undefined, 'general'), ['gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
+      assert.deepStrictEqual(resolveModelCandidates('gemini-3.8-flash', 'complex'), ['gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
+      assert.deepStrictEqual(resolveModelCandidates('gemini-4-argon', 'complex'), ['gemini-4-argon', 'gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
+    });
+
+    await runTest('8.6: HTTP POST /api/gemini/legal-analysis compacts AI prompt, sets LOW thinking on gemini-4-hydrogen, and recovers from 504 DEADLINE_EXCEEDED via fallback', async () => {
+      app.locals.supabaseAuthClient = {
+        auth: {
+          getUser: async () => ({
+            data: { user: { id: 'mock-user-uuid' } },
+            error: null,
+          }),
+        },
+      };
+
+      const attemptedModels: string[] = [];
+      let capturedConfigForPrimary: any = null;
+      let capturedPromptText = '';
+
+      app.locals.geminiAiClient = {
+        models: {
+          generateContent: async (params: any) => {
+            attemptedModels.push(params.model);
+            if (params.model === 'gemini-4-hydrogen') {
+              capturedConfigForPrimary = params.config;
+              capturedPromptText = params.contents?.[0]?.parts?.[0]?.text || '';
+              const err: any = new Error('Deadline expired before operation could complete.');
+              err.status = 504;
+              throw err;
+            }
+            return {
+              text: 'Plain-language synthesis generated via fast fallback model.',
+            };
+          },
+        },
+      };
+
+      try {
+        const draftPayload = {
+          draftFacts: {
+            incidentDate: '2024-09-15',
+            involvedEntity: 'State Bank of India',
+            disputedAmount: 35000,
+            description: 'Unauthorized debit of ₹35,000 from my savings account.',
+            timeline: [
+              {
+                id: 'tl-1',
+                date: '2024-09-15',
+                title: 'Unauthorized Debit',
+                description: 'Funds debited without authorization',
+              },
+            ],
+          },
+        };
+
+        const { status, data } = await dispatchTestRequest('/api/gemini/legal-analysis', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer valid-test-jwt-token',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(draftPayload),
+        });
+
+        assert.strictEqual(status, 200);
+        assert.strictEqual(data?.success, true);
+        assert.strictEqual(data?.isFallback, false);
+        assert.strictEqual(data?.modelUsed, 'gemini-3.1-flash-lite');
+        assert.deepStrictEqual(attemptedModels, ['gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
+        assert.strictEqual(capturedConfigForPrimary?.thinkingConfig?.thinkingLevel, 'LOW');
+        assert.ok(!capturedPromptText.includes('officialSourceUrl'), 'AI prompt must be compacted without static URL boilerplate');
       } finally {
         delete app.locals.supabaseAuthClient;
         delete app.locals.geminiAiClient;

@@ -32,6 +32,7 @@ import {
   getTrustCheckSourceLabel,
 } from './TrustCheck';
 import { GuidedNavigationHeader } from './GuidedNavigationHeader';
+import { LegalMarkdownRenderer } from './LegalMarkdownRenderer';
 import {
   getEvidenceRecommendations,
   associateExhibitWithRecommendation,
@@ -3992,9 +3993,7 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
                   </div>
                 </div>
 
-                <div className="text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed whitespace-pre-line space-y-2">
-                  {currentAnalysis.synthesis}
-                </div>
+                <LegalMarkdownRenderer content={currentAnalysis.synthesis} />
 
                 {/* BNSS Section 173 Statutory Disclaimer Box */}
                 <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400 leading-relaxed space-y-1">
@@ -4460,9 +4459,10 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
                     Evaluated under Indian Law
                   </span>
                 </div>
-                <p className="text-[11px] text-blue-950/80 dark:text-blue-200/80 leading-relaxed">
-                  {(savedAnalysis || currentAnalysis)?.synthesis}
-                </p>
+                <LegalMarkdownRenderer
+                  content={(savedAnalysis || currentAnalysis)?.synthesis || ''}
+                  variant="compact"
+                />
                 <div className="flex flex-wrap items-center gap-1.5 pt-1">
                   {(savedAnalysis || currentAnalysis)?.findings?.temporalJurisdiction?.applicableCriminalStatutes?.slice(0, 3).map((statute) => (
                     <span

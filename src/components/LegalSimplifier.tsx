@@ -184,7 +184,7 @@ MANDATORY_ACTIONS:
           body: JSON.stringify({
             messages: [{ role: 'user', text: prompt }],
             taskType: 'complex',
-            requestedModel: 'gemini-3.8-flash',
+            requestedModel: 'gemini-4-hydrogen',
           }),
         },
         CHAT_CLIENT_TIMEOUT_MS

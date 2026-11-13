@@ -97,7 +97,7 @@ const CHAT_PER_ATTEMPT_TIMEOUT_MS = 15000; // 15 seconds per candidate model att
 const TRANSCRIBE_TOTAL_TIMEOUT_MS = 90000; // 90 seconds total deadline for transcription
 const TRANSCRIBE_PER_ATTEMPT_TIMEOUT_MS = 45000; // 45 seconds per candidate model attempt
 const LEGAL_ANALYSIS_TOTAL_TIMEOUT_MS = 35000; // 35 seconds total deadline for legal analysis (within 45s client limit)
-const LEGAL_ANALYSIS_PER_ATTEMPT_TIMEOUT_MS = 15000; // 15 seconds per candidate model attempt (well above minimum 10s API deadline)
+const LEGAL_ANALYSIS_PER_ATTEMPT_TIMEOUT_MS = 20000; // 20 seconds per candidate model attempt (allows 20s primary + ~15s fallback inside 35s budget)
 const SUPABASE_AUTH_TIMEOUT_MS = 5000; // 5 seconds bounded timeout for Supabase Auth verification
 
 // -------------------------------------------------------------
@@ -512,15 +512,15 @@ const generalBodyParser = express.json({ limit: '100kb' });
 /**
  * Model resolution mapping:
  * Maps requested model identifiers and task types to verified, currently supported
- * production Google Gemini models in the Google GenAI SDK v3.
- * Text/Chat: gemini-3.8-flash (default), gemini-3.1-flash-lite (fast / fallback), gemini-4-argon (complex reasoning).
- * Transcribe: gemini-3.5-transcribe (primary), gemini-3.8-flash (multimodal fallback).
- * Live Voice: gemini-3.8-live.
+ * production Google Gemini models in the Google GenAI SDK v3:
+ * - Text/Chat/Analysis: gemini-4-hydrogen (default), gemini-3.1-flash-lite (fast / fallback), gemini-4-argon (explicit paid complex reasoning).
+ * - Transcribe: gemini-3.5-transcribe (primary), gemini-4-hydrogen (multimodal fallback).
+ * - Live Voice: gemini-3.8-live.
  */
-function resolveModelCandidates(requestedModel?: string, taskType?: string): string[] {
+export function resolveModelCandidates(requestedModel?: string, taskType?: string): string[] {
   // 1. Transcription task
   if (taskType === 'transcribe' || requestedModel === 'gemini-3.5-transcribe') {
-    return ['gemini-3.5-transcribe', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+    return ['gemini-3.5-transcribe', 'gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
   }
 
   // 2. Live Voice stream
@@ -536,7 +536,7 @@ function resolveModelCandidates(requestedModel?: string, taskType?: string): str
   // 3. Explicit requested model (with clean mappings to active supported models)
   if (requestedModel) {
     if (requestedModel === 'gemini-4-argon') {
-      return ['gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+      return ['gemini-4-argon', 'gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
     }
     if (
       requestedModel === 'gemini-3.1-flash-lite' ||
@@ -544,9 +544,10 @@ function resolveModelCandidates(requestedModel?: string, taskType?: string): str
       requestedModel === 'gemini-2.0-flash-lite' ||
       requestedModel === 'gemini-2.5-flash-lite'
     ) {
-      return ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+      return ['gemini-3.1-flash-lite', 'gemini-4-hydrogen'];
     }
     if (
+      requestedModel === 'gemini-4-hydrogen' ||
       requestedModel === 'gemini-3.8-flash' ||
       requestedModel === 'gemini-2.0-flash' ||
       requestedModel === 'gemini-2.5-flash' ||
@@ -554,21 +555,21 @@ function resolveModelCandidates(requestedModel?: string, taskType?: string): str
       requestedModel === 'gemini-2.5-pro' ||
       requestedModel === 'gemini-3.1-pro-preview'
     ) {
-      return ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+      return ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
     }
-    return [requestedModel, 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+    return [requestedModel, 'gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
   }
 
-  // 4. Fallback by taskType
+  // 4. Fallback by taskType (avoid paid-only gemini-4-argon unless explicitly requested)
   if (taskType === 'complex') {
-    return ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-4-argon'];
+    return ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
   }
   if (taskType === 'fast') {
-    return ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+    return ['gemini-3.1-flash-lite', 'gemini-4-hydrogen'];
   }
 
   // 5. Default chat candidates
-  return ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+  return ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
 }
 
 // System instruction giving NivaranSetu AI its specific role
@@ -615,7 +616,7 @@ app.get('/api/gemini/status', statusLimiter, (_req: Request, res: Response) => {
     status: 'ok',
     configured,
     models: {
-      default: 'gemini-3.8-flash',
+      default: 'gemini-4-hydrogen',
       reasoning: 'gemini-4-argon',
       fast: 'gemini-3.1-flash-lite',
       transcribe: 'gemini-3.5-transcribe',
@@ -917,7 +918,7 @@ app.post(
             },
             abortSignal: AbortSignal.timeout(attemptTimeout),
           };
-          if (model === 'gemini-3.8-flash' || model === 'gemini-4-argon' || model === 'gemini-4-carbon') {
+          if (model === 'gemini-4-hydrogen' || model === 'gemini-4-argon' || model === 'gemini-4-carbon') {
             modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
           }
           response = await attemptAi.models.generateContent({
@@ -929,12 +930,12 @@ app.post(
           break;
         } catch (err: any) {
           lastError = err;
-          const errMsg = maskSensitive(err?.message || String(err));
           if (isTimeoutError(err)) {
             isTimedOut = true;
             console.info(`[Chat] Model ${model} timed out after ${attemptTimeout}ms, trying next candidate...`);
           } else {
-            console.info(`[Chat] Model ${model} unavailable, trying next candidate: ${errMsg}`);
+            const status = err?.status || err?.statusCode || 'unavailable';
+            console.info(`[Chat] Model ${model} skipped (status=${status}), trying next candidate...`);
           }
         }
       }
@@ -1276,6 +1277,59 @@ function generateDeterministicSummary(
   ].join('\n\n');
 }
 
+function buildCompactFindingsForAi(findings: any) {
+  return {
+    temporalJurisdiction: {
+      status: findings.temporalJurisdiction.status,
+      earliestOffendingDate: findings.temporalJurisdiction.earliestOffendingDate,
+      latestOffendingDate: findings.temporalJurisdiction.latestOffendingDate,
+      timelineCrossesBnsTransition: findings.temporalJurisdiction.timelineCrossesBnsTransition,
+      applicableStatutes: (findings.temporalJurisdiction.applicableCriminalStatutes || []).map(
+        (s: any) => `${s.actTitle} ${s.sectionNumber} (${s.provisionTitle})`
+      ),
+      savingsProvisions: (findings.temporalJurisdiction.savingsProvisionsCited || []).map(
+        (s: any) => `${s.actTitle} ${s.sectionNumber}`
+      ),
+      explanation: findings.temporalJurisdiction.explanation,
+    },
+    rbiCommercialBanksProtection: {
+      tier: findings.rbiCommercialBanksProtection.tier,
+      isCommercialBankCovered: findings.rbiCommercialBanksProtection.isCommercialBankCovered,
+      isUnsupportedPost2026: findings.rbiCommercialBanksProtection.isUnsupportedPost2026,
+      maximumCustomerLiabilityAmount: findings.rbiCommercialBanksProtection.maximumCustomerLiabilityAmount,
+      shadowCreditEntitlement: findings.rbiCommercialBanksProtection.shadowCreditEntitlement,
+      applicableParagraphs: (findings.rbiCommercialBanksProtection.applicableParagraphs || []).map(
+        (p: any) => `Paragraph ${p.paragraphNumber}${p.subParagraph ? `(${p.subParagraph})` : ''}: ${p.title}`
+      ),
+      institutionScopeNotice: findings.rbiCommercialBanksProtection.institutionScopeNotice,
+      plainLanguageSummary: findings.rbiCommercialBanksProtection.plainLanguageSummary,
+      burdenOfProofNotice: findings.rbiCommercialBanksProtection.burdenOfProofNotice,
+    },
+    consumerProtectionAct: {
+      isEligible: findings.consumerProtectionAct.isEligible,
+      recommendedForum: findings.consumerProtectionAct.recommendedForum,
+      applicableProvisions: (findings.consumerProtectionAct.applicableProvisions || []).map(
+        (p: any) => `${p.actTitle} ${p.sectionNumber} (${p.provisionTitle})`
+      ),
+      reasoning: findings.consumerProtectionAct.reasoning,
+    },
+    criminalOffencesAssessment: {
+      assessedOffences: (findings.criminalOffencesAssessment.assessedOffences || []).map((o: any) => ({
+        actTitle: o.actTitle,
+        sectionNumber: o.sectionNumber,
+        provisionTitle: o.provisionTitle,
+        isPrimaFacieSupported: o.isPrimaFacieSupported,
+        prescribedPunishment: o.prescribedPunishment,
+        establishedIngredients: o.establishedIngredients,
+        missingIngredients: o.missingIngredients,
+        evidentiaryNote: o.evidentiaryNote,
+      })),
+      cautionaryNotice: findings.criminalOffencesAssessment.cautionaryNotice,
+    },
+    assessmentMetadata: findings.assessmentMetadata,
+  };
+}
+
 const LEGAL_ANALYSIS_SYSTEM_INSTRUCTION = `You are NivaranSetu's Financial Crime Legal Analysis Communicator.
 You explain deterministic statutory findings to Indian citizens in objective, legally precise, plain language.
 CRITICAL MANDATORY RULES:
@@ -1482,11 +1536,12 @@ app.post(
         const candidateModels = resolveModelCandidates(requestedModel, 'complex');
         const deadline = Date.now() + LEGAL_ANALYSIS_TOTAL_TIMEOUT_MS;
 
+        const compactFindings = buildCompactFindingsForAi(engineFindings);
         const structuredPrompt = JSON.stringify({
           instruction: 'Explain the following statutory findings clearly and objectively to the citizen. Do not add offences or declare guilt.',
           targetEntity,
           disputedAmount: disputedAmountVal,
-          deterministicFindings: engineFindings,
+          deterministicFindings: compactFindings,
         });
 
         for (const model of candidateModels) {
@@ -1503,7 +1558,7 @@ app.post(
               },
               abortSignal: AbortSignal.timeout(attemptTimeout),
             };
-            if (model === 'gemini-3.8-flash' || model === 'gemini-4-argon' || model === 'gemini-4-carbon') {
+            if (model === 'gemini-4-hydrogen' || model === 'gemini-4-argon' || model === 'gemini-4-carbon') {
               modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
             }
             const aiResponse = await attemptAi.models.generateContent({
@@ -1524,9 +1579,9 @@ app.post(
               break;
             }
           } catch (modelErr: any) {
-            const errMsg = maskSensitive(modelErr?.message || String(modelErr));
+            const status = modelErr?.status || modelErr?.statusCode || (isTimeoutError(modelErr) ? 504 : 'unavailable');
             console.info(
-              `[Legal Analysis] Model ${model} unavailable, trying fallback: ${errMsg}`
+              `[Legal Analysis] Model ${model} skipped (status=${status}), trying next candidate.`
             );
           }
         }
