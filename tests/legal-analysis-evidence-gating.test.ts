@@ -213,6 +213,7 @@ async function main() {
 
     // Full HTTP POST /api/gemini/legal-analysis pipeline check with Gemini prompt capture
     let capturedPromptText = '';
+    let geminiInvokeCount = 0;
     const { client } = createMockSupabaseAndRecorder({
       caseRow,
       evidenceRows: [poisonedProcessedExhibit],
@@ -231,6 +232,7 @@ async function main() {
     app.locals.geminiAiClient = {
       models: {
         generateContent: async (params: any) => {
+          geminiInvokeCount += 1;
           capturedPromptText = params.contents?.[0]?.parts?.[0]?.text || '';
           return { text: 'Objective summary without untrusted OCR.' };
         },
@@ -249,6 +251,15 @@ async function main() {
 
       assert.strictEqual(status, 200);
       assert.strictEqual(data.success, true);
+      assert.strictEqual(geminiInvokeCount, 1, 'Mock Gemini client must actually be invoked');
+      assert.strictEqual(data.isFallback, false, 'Response must come from invoked mock Gemini client');
+      assert.ok(capturedPromptText.trim().length > 0, 'Captured Gemini prompt must be non-empty');
+      assert.ok(
+        capturedPromptText.includes('Apex Bank of India') &&
+          capturedPromptText.includes('"disputedAmount":10000') &&
+          capturedPromptText.includes('unexplained bank debit alone does not constitute cheating'),
+        'Prompt must reflect legitimate citizen case narrative and deterministic findings'
+      );
 
       const offences = data.findings.criminalOffencesAssessment.assessedOffences;
       for (const id of ['BNS-318-4', 'BNS-319-2', 'BNS-336-2', 'BNS-336-3', 'BNS-338', 'IT-66C', 'IT-66D']) {
@@ -378,13 +389,14 @@ async function main() {
       ocr_extracted: { status: 'pending', summary: '' },
     };
 
-    // 4a. Forged receipt in full deception/transfer narrative + active screenshot
+    // 4a. Forged receipt falsely acknowledging payment of disputed amount + active screenshot
     const forgedReceiptCase = {
       id: 'case-forged-receipt-ss',
       involved_entity: 'Apex Bank of India',
       disputed_amount: 15000,
       incident_date: '2025-03-01',
-      description: 'The fraudster impersonated a bank manager over WhatsApp, sent a forged receipt, and induced me to transfer ₹15,000.',
+      description:
+        'The fraudster impersonated a bank manager over WhatsApp, sent a forged receipt falsely acknowledging payment of the ₹15,000 disputed amount, and induced me to transfer ₹15,000.',
     };
     const ctxReceipt = extractFactualContextFromDb(forgedReceiptCase, [activeScreenshot]);
     assert.strictEqual(ctxReceipt.hasFabricatedDocumentOrElectronicRecord, true);
