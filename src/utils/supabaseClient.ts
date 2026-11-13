@@ -17,7 +17,7 @@ if (typeof process !== 'undefined' && typeof (process as any).loadEnvFile === 'f
 // Singleton instance holder to ensure client is initialized only once
 let supabaseInstance: SupabaseClient | null = null;
 
-function resolveConfig(): { url: string; key: string } {
+export function resolveConfig(): { url: string; key: string } {
   let url = '';
   let key = '';
 
@@ -31,13 +31,18 @@ function resolveConfig(): { url: string; key: string } {
 
   // Process environment fallback (Node / tsx test runners)
   if (!url && typeof process !== 'undefined' && process.env) {
-    url = process.env.VITE_SUPABASE_URL || '';
+    url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
   }
   if (!key && typeof process !== 'undefined' && process.env) {
-    key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || '';
+    key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '';
   }
 
   return { url: url.trim(), key: key.trim() };
+}
+
+export function isSupabaseConfigured(): boolean {
+  const { url, key } = resolveConfig();
+  return Boolean(url && key);
 }
 
 /**

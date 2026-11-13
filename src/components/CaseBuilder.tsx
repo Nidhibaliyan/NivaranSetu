@@ -23,6 +23,11 @@ import {
   verifyEvidenceBytes,
 } from '../utils/evidenceStorage';
 import {
+  resolveExhibitOcrData,
+  hasGenuineOcrContent,
+  ExhibitOcrData,
+} from '../utils/evidenceOcr';
+import {
   getTrustCheckBadgeConfig,
   getTrustCheckSourceLabel,
 } from './TrustCheck';
@@ -107,24 +112,6 @@ interface CaseBuilderProps {
   onStartNewCase?: () => void;
 }
 
-interface RawOcrData {
-  rawText: string;
-  confidence: number;
-  engine: string;
-  dpi: number;
-  charCount: number;
-  lineCount: number;
-  boundingBoxes: Array<{
-    id: number;
-    text: string;
-    type: 'header' | 'amount' | 'date' | 'id' | 'body';
-    topPercent: number;
-    leftPercent: number;
-    widthPercent: number;
-    heightPercent: number;
-  }>;
-}
-
 export type SaveOperationResult = 'saved' | 'discarded_stale' | 'failed';
 
 export interface CaseBaselineState {
@@ -177,6 +164,7 @@ export function computeEvidenceFingerprint(evidence: EvidenceItem[]): string {
         e.storageRef || '',
         e.rawOcrText || '',
         e.hasBlob ? 'blob' : 'noblob',
+        e.ocrStatus || e.ocrExtracted?.status || '',
         ocrExt,
         flagStr,
         e.claimMappedTo || '',
@@ -478,13 +466,69 @@ export interface PrerequisiteNoticeAssessment {
   note: string;
 }
 
+export interface EvidenceMaturitySummary {
+  uploaded: number;
+  processed: number;
+  relevant: number;
+  verified: number;
+}
+
+function isEvidenceUsableForAssessment(item: EvidenceItem): boolean {
+  const effectiveStatus = item.ocrStatus || item.ocrExtracted?.status;
+  if (effectiveStatus === 'pending' || effectiveStatus === 'no_text' || effectiveStatus === 'failed') {
+    return false;
+  }
+  if (item.hasBlob === true) {
+    return hasGenuineOcrContent(item) || item.verifiedOriginal === true;
+  }
+  return hasGenuineOcrContent(item) || item.verifiedOriginal === true;
+}
+
 /**
- * Truthfully evaluates prerequisite dispute communication based strictly on uploaded exhibits.
- * Distinguishes four distinct states:
- * - State A (0%): No prior communication or notice attached
- * - State B (40%): Customer correspondence attached (formal dispute ticket unverified)
- * - State C (60%): Notice document attached (delivery / service not independently established)
- * - State D (85%): Formal complaint acknowledgement / ticket attached
+ * Classifies exhibits along 4 independent evidentiary stages:
+ * - uploaded: total attached exhibits (physical blob or metadata exhibit)
+ * - processed: exhibits with genuine OCR text / extracted fields (excludes pending, no_text, failed)
+ * - relevant: processed exhibits mapped to a claim or carrying a specific evidentiary category (excludes generic screenshot unless mapped)
+ * - verified: exhibits explicitly verified as originals (SHA-256 upload alone never marks verifiedOriginal)
+ */
+export function evaluateEvidenceMaturity(evidenceList?: EvidenceItem[]): EvidenceMaturitySummary {
+  if (!evidenceList || evidenceList.length === 0) {
+    return { uploaded: 0, processed: 0, relevant: 0, verified: 0 };
+  }
+
+  let processed = 0;
+  let relevant = 0;
+  let verified = 0;
+
+  for (const item of evidenceList) {
+    const usable = isEvidenceUsableForAssessment(item);
+    if (usable) {
+      processed++;
+      const hasSpecificCategory = Boolean(
+        item.category &&
+          ['bank_statement', 'receipt', 'agreement', 'notice', 'correspondence'].includes(item.category)
+      );
+      if (Boolean(item.claimMappedTo) || hasSpecificCategory) {
+        relevant++;
+      }
+    }
+
+    if (item.verifiedOriginal === true && (!item.hasBlob || Boolean(item.sha256Hash))) {
+      verified++;
+    }
+  }
+
+  return {
+    uploaded: evidenceList.length,
+    processed,
+    relevant,
+    verified,
+  };
+}
+
+/**
+ * Truthfully evaluates prerequisite dispute communication based strictly on readable/processed exhibits.
+ * Pending, no_text, or failed uploads NEVER earn notice/correspondence/ticket credit from filenames alone.
  */
 export function evaluatePrerequisiteNotice(evidenceList?: EvidenceItem[]): PrerequisiteNoticeAssessment {
   if (!evidenceList || evidenceList.length === 0) {
@@ -495,12 +539,21 @@ export function evaluatePrerequisiteNotice(evidenceList?: EvidenceItem[]): Prere
     };
   }
 
+  const usableExhibits = evidenceList.filter(isEvidenceUsableForAssessment);
+  if (usableExhibits.length === 0) {
+    return {
+      state: 'none',
+      score: 0,
+      note: 'No readable dispute ticket or notice detected (OCR scan pending or no text detected)',
+    };
+  }
+
   const isComplaintTicket = (item: EvidenceItem): boolean => {
     const ticketRecs = ['rec_bank_complaint', 'rec_telecom_docket', 'rec_municipal_token', 'rec_delay_representation'];
     if (item.claimMappedTo && ticketRecs.includes(item.claimMappedTo)) {
       return true;
     }
-    const lowerText = `${item.title || ''} ${item.fileName || ''} ${item.ocrExtracted?.summary || ''}`.toLowerCase();
+    const lowerText = `${item.title || ''} ${item.fileName || ''} ${item.ocrExtracted?.summary || ''} ${item.rawOcrText || ''}`.toLowerCase();
     const ticketKeywords = [
       'acknowledgement',
       'acknowledgment',
@@ -519,19 +572,19 @@ export function evaluatePrerequisiteNotice(evidenceList?: EvidenceItem[]): Prere
   const isNoticeDoc = (item: EvidenceItem): boolean => {
     if (item.category === 'notice') return true;
     if (item.claimMappedTo === 'rec_discom_utility_notice') return true;
-    const lowerText = `${item.title || ''} ${item.fileName || ''}`.toLowerCase();
+    const lowerText = `${item.title || ''} ${item.fileName || ''} ${item.ocrExtracted?.summary || ''}`.toLowerCase();
     return lowerText.includes('notice') || lowerText.includes('legal notice') || lowerText.includes('demand letter');
   };
 
   const isCorrespondenceDoc = (item: EvidenceItem): boolean => {
     if (item.category === 'correspondence') return true;
     if (item.claimMappedTo === 'rec_seller_communication' || item.claimMappedTo === 'rec_claim_repudiation') return true;
-    const lowerText = `${item.title || ''} ${item.fileName || ''}`.toLowerCase();
+    const lowerText = `${item.title || ''} ${item.fileName || ''} ${item.ocrExtracted?.summary || ''}`.toLowerCase();
     return lowerText.includes('email') || lowerText.includes('chat') || lowerText.includes('correspondence') || lowerText.includes('support ticket');
   };
 
   // State D: Complaint acknowledgement / formal ticket attached (85%)
-  if (evidenceList.some(isComplaintTicket)) {
+  if (usableExhibits.some(isComplaintTicket)) {
     return {
       state: 'complaint_ticket',
       score: 85,
@@ -540,7 +593,7 @@ export function evaluatePrerequisiteNotice(evidenceList?: EvidenceItem[]): Prere
   }
 
   // State C: Notice document attached, delivery / service not independently established (60%)
-  if (evidenceList.some(isNoticeDoc)) {
+  if (usableExhibits.some(isNoticeDoc)) {
     return {
       state: 'notice',
       score: 60,
@@ -549,7 +602,7 @@ export function evaluatePrerequisiteNotice(evidenceList?: EvidenceItem[]): Prere
   }
 
   // State B: Customer correspondence attached, formal dispute ticket unverified (40%)
-  if (evidenceList.some(isCorrespondenceDoc)) {
+  if (usableExhibits.some(isCorrespondenceDoc)) {
     return {
       state: 'correspondence',
       score: 40,
@@ -574,20 +627,22 @@ export interface CaseReadinessResult {
     identityProof: number;
     formalNoticeSent: number;
   };
+  evidenceMaturity: EvidenceMaturitySummary;
   prerequisiteNotice: PrerequisiteNoticeAssessment;
 }
 
 /**
  * Calculates dynamic case readiness based on 4 factual pillars:
- * 1. Evidence Completeness (35% weight)
+ * 1. Evidence Completeness (35% weight) — requires processed/relevant exhibits (pending/no_text/failed earn 0%)
  * 2. Incident Timeline Clarity (25% weight)
  * 3. Entity Identification (20% weight)
  * 4. Prerequisite Notice (20% weight)
  *
  * Strict Readiness Guard:
- * - 0 exhibits: Tier is strictly capped at 'incomplete' (cannot be 'ready').
- * - 1 exhibit: Tier can be at most 'needs_info'.
- * - 2+ exhibits and score >= 80 required for 'ready' tier.
+ * - Unprocessed, pending, or no-text exhibits earn 0 completeness/notice points.
+ * - 0 processed exhibits: Tier is strictly capped at 'incomplete'.
+ * - 1 processed exhibit: Tier can be at most 'needs_info'.
+ * - 2+ processed exhibits with relevance and score >= 80 required for 'ready' tier.
  */
 export function calculateCaseReadiness(params: {
   description?: string;
@@ -601,11 +656,17 @@ export function calculateCaseReadiness(params: {
   const incidentDate = params.incidentDate || '';
   const evidenceList = params.evidenceList || [];
 
+  const evidenceMaturity = evaluateEvidenceMaturity(evidenceList);
+
   // 1. Evidence Completeness (0 to 100)
+  // Only processed/readable exhibits contribute to evidentiary completeness.
   let evidenceCompleteness = 0;
   if (evidenceList.length > 0) {
     let earnedEvidence = 0;
     for (const item of evidenceList) {
+      if (!isEvidenceUsableForAssessment(item)) {
+        continue;
+      }
       const hasSpecificCategory =
         item.category &&
         ['bank_statement', 'receipt', 'agreement', 'notice', 'correspondence'].includes(item.category);
@@ -651,11 +712,11 @@ export function calculateCaseReadiness(params: {
 
   const score = Math.max(0, Math.min(95, weightedScore));
 
-  // Evidence-Gated Readiness Tier
+  // Evidence-Gated Readiness Tier (requires genuinely processed evidence, not just raw uploads)
   let tier: 'ready' | 'needs_info' | 'incomplete' = 'incomplete';
-  if (score >= 80 && evidenceList.length >= 2) {
+  if (score >= 80 && evidenceMaturity.processed >= 2 && evidenceMaturity.relevant >= 1) {
     tier = 'ready';
-  } else if (score >= 50 && evidenceList.length >= 1) {
+  } else if (score >= 50 && evidenceMaturity.processed >= 1) {
     tier = 'needs_info';
   } else {
     tier = 'incomplete';
@@ -670,6 +731,7 @@ export function calculateCaseReadiness(params: {
       identityProof,
       formalNoticeSent,
     },
+    evidenceMaturity,
     prerequisiteNotice,
   };
 }
@@ -1126,13 +1188,16 @@ export async function executeEvidenceUploadWithParentPersistence(
         sha256Hash: uploadResult.sha256Hash,
         storageRef: uploadResult.storageRef,
         hasBlob: true,
+        rawOcrText: undefined,
+        ocrStatus: 'pending',
         claimMappedTo: params.claimMappedTo || undefined,
         ocrExtracted: {
-          dates: [incidentDate],
-          amounts: disputedAmount ? [`₹${disputedAmount.toLocaleString('en-IN')}`] : ['Pending OCR scan'],
-          identifiers: [`REF-${Math.floor(100000 + Math.random() * 900000)}`],
-          parties: [involvedEntity || 'Opposite Party'],
-          summary: `Preserved electronic exhibit (${fileName}) stored in private evidence vault and hashed via SHA-256.`,
+          dates: [],
+          amounts: [],
+          identifiers: [],
+          parties: [],
+          summary: '',
+          status: 'pending',
         },
         verifiedOriginal: false,
       };
@@ -2052,7 +2117,7 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
 
     const formalBody = `To,\nThe Competent Redressal Authority / Ombudsman,\n\nSUB: FORMAL CITIZEN GRIEVANCE PETITION UNDER STATUTORY REDRESSAL SCHEME\n\n1. PARTIES:\nComplainant: Citizen Consumer\nOpposite Party / Regulated Entity: ${involvedEntity || 'Regulated Entity'}, Location: ${incidentLocation}\n\n2. STATEMENT OF FACTS:\nOn or about ${incidentDate}, the complainant suffered an unauthorized grievance amounting to INR ${disputedAmount ? disputedAmount.toLocaleString('en-IN') : '0'}.\n\nNarrative of Incident:\n${description}\n\nTransaction & Identifier References:\n- Involved Entity: ${involvedEntity}\n- Disputed Identifier / VPA: ${upiIdOrVpa}\n- Bank / Txn Reference: ${transactionRef}\n- Disputed Amount: INR ${disputedAmount ? disputedAmount.toLocaleString('en-IN') : '0'}\n\n3. EVIDENCE EXHIBITS:\n${evidenceList.map((e, i) => `Exhibit Ex-0${i + 1}: ${e.title} (${e.fileName}) — SHA-256: ${e.sha256Hash}`).join('\n') || 'None attached'}\n\n4. STATUTORY PREREQUISITES:\nThe complainant has satisfied mandatory escalation prerequisites and served written notice to customer support without receiving fair redressal.\n\n5. PRAYER FOR RELIEF:\nThe complainant respectfully prays that this Authority:\n(a) Direct the opposite party to credit back/rectify the disputed sum of INR ${disputedAmount ? disputedAmount.toLocaleString('en-IN') : '0'};\n(b) Direct payment of appropriate statutory interest and token compensation for harassment.`;
 
-    const simpleBody = `I am submitting a grievance about ${involvedEntity}. On ${incidentDate}, I suffered an issue amounting to ₹${disputedAmount.toLocaleString('en-IN')}. I informed the company but have not received a fair resolution. I have attached ${evidenceList.length} verified evidence documents. I request the authority to direct a full refund and resolution.`;
+    const simpleBody = `I am submitting a grievance about ${involvedEntity}. On ${incidentDate}, I suffered an issue amounting to ₹${disputedAmount.toLocaleString('en-IN')}. I informed the company but have not received a fair resolution. I have attached ${evidenceList.length} evidence exhibit(s) (${readiness.evidenceMaturity.verified} verified original). I request the authority to direct a full refund and resolution.`;
 
     const dynamicMissingElements = deriveMissingElements({
       description,
@@ -2067,7 +2132,7 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
       id: caseId,
       title: title || `Grievance: ${involvedEntity || 'Opposite Party'} (${category.replace(/_/g, ' ')})`,
       category,
-      stage: evidenceList.length >= 2 ? 'ready_to_file' : 'evidence_gathering',
+      stage: readiness.tier === 'ready' ? 'ready_to_file' : 'evidence_gathering',
       status: 'active',
       createdAt: initialCase?.createdAt || new Date().toISOString(),
       lastUpdated: new Date().toISOString(),
@@ -2335,78 +2400,8 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
     }
   };
 
-  // Generate realistic OCR data for selected exhibit
-  const getSelectedOcrData = (item?: EvidenceItem): RawOcrData => {
-    if (!item) {
-      return {
-        rawText: 'NO EXHIBIT SELECTED',
-        confidence: 0,
-        engine: 'NivaranSetu Vision Engine',
-        dpi: 300,
-        charCount: 0,
-        lineCount: 0,
-        boundingBoxes: [],
-      };
-    }
-
-    const titleLower = item.title.toLowerCase();
-    const isSms = titleLower.includes('sms') || item.category === 'screenshot';
-    const isStatement = titleLower.includes('statement') || titleLower.includes('passbook') || item.category === 'bank_statement';
-
-    if (isSms) {
-      const rawText = `[SMS SENDER: ${involvedEntity || 'VM-POWURG'}]\nDATE: ${incidentDate} 17:42:10 IST\nRECIPIENT: Citizen\n\nNOTICE: Immediate action required regarding electricity/banking transaction.\nURL / Reference: ${upiIdOrVpa || 'quick-pay.apk/verify'}\nThreat Pattern: Deceptive impersonation script.`;
-      return {
-        rawText,
-        confidence: 99.2,
-        engine: 'NivaranSetu High-Res OCR (300 DPI)',
-        dpi: 300,
-        charCount: rawText.length,
-        lineCount: rawText.split('\n').length,
-        boundingBoxes: [
-          { id: 1, text: 'Sender Header Identifier', type: 'header', topPercent: 8, leftPercent: 10, widthPercent: 55, heightPercent: 12 },
-          { id: 2, text: `Date: ${incidentDate}`, type: 'date', topPercent: 24, leftPercent: 10, widthPercent: 40, heightPercent: 10 },
-          { id: 3, text: 'Notice & Threat Content', type: 'body', topPercent: 40, leftPercent: 10, widthPercent: 80, heightPercent: 25 },
-          { id: 4, text: upiIdOrVpa || 'Rogue Reference', type: 'id', topPercent: 70, leftPercent: 10, widthPercent: 65, heightPercent: 12 },
-        ],
-      };
-    }
-
-    if (isStatement) {
-      const rawText = `BANK STATEMENT OF ACCOUNT (INR)\nENTITY: ${involvedEntity || 'APEX BANK OF INDIA'}\nDATE: ${incidentDate}\nTXN REF: ${transactionRef}\nDEBIT AMOUNT: INR ${disputedAmount ? disputedAmount.toLocaleString('en-IN') : '42,500.00'}\nSTATUS: DEBIT EXECUTED VIA UPI CHANNEL`;
-      return {
-        rawText,
-        confidence: 98.8,
-        engine: 'NivaranSetu Financial Document Parser (300 DPI)',
-        dpi: 300,
-        charCount: rawText.length,
-        lineCount: rawText.split('\n').length,
-        boundingBoxes: [
-          { id: 1, text: `${involvedEntity || 'Bank'} Header`, type: 'header', topPercent: 6, leftPercent: 10, widthPercent: 80, heightPercent: 10 },
-          { id: 2, text: `Date: ${incidentDate}`, type: 'date', topPercent: 20, leftPercent: 10, widthPercent: 40, heightPercent: 10 },
-          { id: 3, text: `Debit: ₹${disputedAmount.toLocaleString('en-IN')}`, type: 'amount', topPercent: 36, leftPercent: 10, widthPercent: 80, heightPercent: 12 },
-          { id: 4, text: `Txn Ref: ${transactionRef}`, type: 'id', topPercent: 52, leftPercent: 10, widthPercent: 60, heightPercent: 10 },
-        ],
-      };
-    }
-
-    const rawText = `DOCUMENT EXHIBIT: ${item.title}\nFILE: ${item.fileName} (${item.fileSize})\nINGEST DATE: ${item.uploadDate}\nSHA-256 DIGEST: ${item.sha256Hash}\nINTEGRITY STATUS: VERIFIED ORIGINAL`;
-    return {
-      rawText,
-      confidence: 97.5,
-      engine: 'NivaranSetu Document OCR (300 DPI)',
-      dpi: 300,
-      charCount: rawText.length,
-      lineCount: 5,
-      boundingBoxes: [
-        { id: 1, text: item.title, type: 'header', topPercent: 10, leftPercent: 10, widthPercent: 75, heightPercent: 14 },
-        { id: 2, text: `File: ${item.fileName}`, type: 'body', topPercent: 30, leftPercent: 10, widthPercent: 60, heightPercent: 12 },
-        { id: 3, text: `SHA-256: ${item.sha256Hash ? item.sha256Hash.slice(0, 16) + '...' : 'Metadata only'}`, type: 'id', topPercent: 50, leftPercent: 10, widthPercent: 80, heightPercent: 14 },
-      ],
-    };
-  };
-
   const selectedExhibit = evidenceList.find((e) => e.id === selectedExhibitId) || evidenceList[0];
-  const ocrData = getSelectedOcrData(selectedExhibit);
+  const ocrData: ExhibitOcrData = resolveExhibitOcrData(selectedExhibit);
 
   // Validate step requirements before advancing
   const handleValidateAndAdvance = (targetStep: number) => {
@@ -3359,9 +3354,49 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
 
                         <div className="mt-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between text-[10px] font-mono text-zinc-400">
                           <span>SHA: {item.sha256Hash ? item.sha256Hash.slice(0, 12) + '...' : 'Metadata only'}</span>
-                          <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                            Verified
-                          </span>
+                          {(() => {
+                            const itemOcr = resolveExhibitOcrData(item);
+                            if (item.verifiedOriginal) {
+                              return (
+                                <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                                  Verified Original
+                                </span>
+                              );
+                            }
+                            if (itemOcr.status === 'no_text') {
+                              return (
+                                <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                                  No Text Detected
+                                </span>
+                              );
+                            }
+                            if (itemOcr.status === 'pending') {
+                              return (
+                                <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                                  OCR Pending
+                                </span>
+                              );
+                            }
+                            if (itemOcr.status === 'failed') {
+                              return (
+                                <span className="text-red-600 dark:text-red-400 font-semibold">
+                                  OCR Failed
+                                </span>
+                              );
+                            }
+                            if (itemOcr.status === 'demo') {
+                              return (
+                                <span className="text-zinc-500 dark:text-zinc-400 font-semibold">
+                                  Sample Exhibit
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="text-zinc-500 dark:text-zinc-400 font-semibold">
+                                Uploaded (Unverified)
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
                     );
@@ -3502,6 +3537,16 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
                           {idVal}
                         </span>
                       ))}
+                      {selectedExhibit.ocrExtracted.amounts.length === 0 &&
+                        selectedExhibit.ocrExtracted.dates.length === 0 &&
+                        selectedExhibit.ocrExtracted.identifiers.length === 0 &&
+                        selectedExhibit.ocrExtracted.parties.length === 0 && (
+                          <span className="text-[11px] font-mono text-zinc-500">
+                            {ocrData.status === 'no_text'
+                              ? 'No text detected in this exhibit.'
+                              : 'OCR scan pending — no structured entities extracted yet.'}
+                          </span>
+                        )}
                     </div>
                   </div>
 
@@ -3644,10 +3689,8 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
                     score: readiness.breakdown.evidenceCompleteness,
                     note:
                       evidenceList.length === 0
-                        ? '0 documents attached (primary evidence required)'
-                        : evidenceList.length === 1
-                        ? '1 document attached (corroborating proof recommended)'
-                        : `${evidenceList.length} documents attached`,
+                        ? '0 exhibits uploaded (primary evidence required)'
+                        : `${readiness.evidenceMaturity.uploaded} uploaded · ${readiness.evidenceMaturity.processed} OCR processed · ${readiness.evidenceMaturity.relevant} relevant · ${readiness.evidenceMaturity.verified} verified`,
                   },
                   {
                     label: 'Incident Timeline Clarity',
@@ -3708,9 +3751,9 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
                     {involvedEntity.trim() && !isUrlOrDomainIndicator(involvedEntity) && !isUnknownEntity(involvedEntity) && (
                       <li>• Identified entity: {involvedEntity}</li>
                     )}
-                    {evidenceList.length > 0 && (
+                    {readiness.evidenceMaturity.uploaded > 0 && (
                       <li>
-                        • {evidenceList.length} evidence exhibit{evidenceList.length > 1 ? 's' : ''} cryptographically preserved
+                        • {readiness.evidenceMaturity.uploaded} exhibit{readiness.evidenceMaturity.uploaded > 1 ? 's' : ''} uploaded ({readiness.evidenceMaturity.processed} OCR processed · {readiness.evidenceMaturity.relevant} relevant · {readiness.evidenceMaturity.verified} verified)
                       </li>
                     )}
                     {readiness.prerequisiteNotice.state === 'complaint_ticket' && (
@@ -3726,10 +3769,12 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
                     <span>Recommended Next Steps</span>
                   </div>
                   <ul className="space-y-1 text-zinc-600 dark:text-zinc-400 text-[11px]">
-                    {evidenceList.length === 0 ? (
+                    {readiness.evidenceMaturity.uploaded === 0 ? (
                       <li>• Attach primary evidence exhibit in Step 2 (e.g. transaction receipt, SMS screenshot)</li>
-                    ) : evidenceList.length === 1 ? (
-                      <li>• Upload second corroborating document (e.g. statement or customer support ticket)</li>
+                    ) : readiness.evidenceMaturity.processed === 0 ? (
+                      <li>• Attach clear, readable documentary evidence (uploaded file has OCR scan pending or no text detected)</li>
+                    ) : readiness.evidenceMaturity.processed < 2 ? (
+                      <li>• Upload second corroborating document with readable details (e.g. statement or customer support ticket)</li>
                     ) : null}
                     {(!involvedEntity.trim() || isUrlOrDomainIndicator(involvedEntity) || isUnknownEntity(involvedEntity)) && (
                       <li>• Identify legal respondent (bank, utility, or company) when known (can be determined later; does not block drafting)</li>
@@ -4726,29 +4771,47 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
                         <div>{item.sha256Hash || 'Metadata only (Unuploaded exhibit)'}</div>
                       </div>
 
-                      {/* Useful OCR Metadata (only if exists) */}
-                      {item.ocrExtracted && (
-                        (item.ocrExtracted.amounts?.length || item.ocrExtracted.dates?.length || item.ocrExtracted.summary) ? (
-                          <div className="flex flex-wrap items-center gap-2 text-[10px] pt-0.5">
-                            <span className="font-semibold text-zinc-500">OCR Extracted:</span>
-                            {item.ocrExtracted.amounts?.length > 0 && (
-                              <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
-                                Amounts: {item.ocrExtracted.amounts.join(', ')}
-                              </span>
-                            )}
-                            {item.ocrExtracted.dates?.length > 0 && (
-                              <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
-                                Dates: {item.ocrExtracted.dates.join(', ')}
-                              </span>
-                            )}
-                            {item.ocrExtracted.summary && (
-                              <span className="text-zinc-500 truncate max-w-md">
-                                Summary: {item.ocrExtracted.summary}
-                              </span>
-                            )}
+                      {/* Useful OCR Metadata (or truthful pending / no_text indicator) */}
+                      {(() => {
+                        const step5Ocr = resolveExhibitOcrData(item);
+                        if (
+                          item.ocrExtracted &&
+                          (item.ocrExtracted.amounts?.length ||
+                            item.ocrExtracted.dates?.length ||
+                            item.ocrExtracted.summary)
+                        ) {
+                          return (
+                            <div className="flex flex-wrap items-center gap-2 text-[10px] pt-0.5">
+                              <span className="font-semibold text-zinc-500">OCR Extracted:</span>
+                              {item.ocrExtracted.amounts?.length > 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
+                                  Amounts: {item.ocrExtracted.amounts.join(', ')}
+                                </span>
+                              )}
+                              {item.ocrExtracted.dates?.length > 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
+                                  Dates: {item.ocrExtracted.dates.join(', ')}
+                                </span>
+                              )}
+                              {item.ocrExtracted.summary && (
+                                <span className="text-zinc-500 truncate max-w-md">
+                                  Summary: {item.ocrExtracted.summary}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="text-[10px] text-amber-600 dark:text-amber-400 font-mono pt-0.5">
+                            OCR Status:{' '}
+                            {step5Ocr.status === 'no_text'
+                              ? 'No text detected'
+                              : step5Ocr.status === 'failed'
+                              ? 'Scan unavailable'
+                              : 'Scan pending'}
                           </div>
-                        ) : null
-                      )}
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>

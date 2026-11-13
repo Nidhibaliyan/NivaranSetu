@@ -365,7 +365,7 @@ RATIONALE: [2-3 sentences explaining the legal and factual basis for this classi
           body: JSON.stringify({
             messages: [{ role: 'user', text: prompt }],
             taskType: 'complex',
-            requestedModel: 'gemini-4-argon',
+            requestedModel: 'gemini-3.8-flash',
           }),
         },
         CHAT_CLIENT_TIMEOUT_MS

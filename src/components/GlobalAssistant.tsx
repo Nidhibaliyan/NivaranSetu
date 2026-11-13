@@ -54,7 +54,7 @@ interface ChatMessage {
   };
 }
 
-type ModelType = 'gemini-3.8-flash' | 'gemini-4-argon' | 'gemini-3.5-flash-lite' | 'gemini-2.0-flash' | 'gemini-1.5-pro' | 'gemini-2.0-flash-lite';
+type ModelType = 'gemini-3.8-flash' | 'gemini-4-argon' | 'gemini-3.1-flash-lite';
 
 export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTab }) => {
   const { language } = useLanguage();
@@ -64,7 +64,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
   const [isLoading, setIsLoading] = useState(false);
 
   // Model selection state
-  // gemini-3.8-flash for general tasks, gemini-4-argon for complex legal tasks, gemini-3.5-flash-lite for fast tasks
+  // gemini-3.8-flash for general tasks, gemini-4-argon for complex legal tasks, gemini-3.1-flash-lite for fast tasks
   const [selectedModel, setSelectedModel] = useState<ModelType>('gemini-3.8-flash');
 
   // Audio transcription with gemini-3.5-transcribe
@@ -391,9 +391,9 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
             messages: chatHistory,
             requestedModel: selectedModel,
             taskType:
-              selectedModel === 'gemini-4-argon' || selectedModel === 'gemini-1.5-pro'
+              selectedModel === 'gemini-4-argon'
                 ? 'complex'
-                : selectedModel === 'gemini-3.5-flash-lite' || selectedModel === 'gemini-2.0-flash-lite'
+                : selectedModel === 'gemini-3.1-flash-lite'
                 ? 'fast'
                 : 'general',
           }),
@@ -858,7 +858,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
                 <button
                   onClick={() => setSelectedModel('gemini-3.8-flash')}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                    selectedModel === 'gemini-3.8-flash' || selectedModel === 'gemini-2.0-flash'
+                    selectedModel === 'gemini-3.8-flash'
                       ? 'bg-[#007FFF] text-white shadow-xs'
                       : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800'
                   }`}
@@ -869,24 +869,24 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
                 <button
                   onClick={() => setSelectedModel('gemini-4-argon')}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                    selectedModel === 'gemini-4-argon' || selectedModel === 'gemini-1.5-pro'
+                    selectedModel === 'gemini-4-argon'
                       ? 'bg-[#007FFF] text-white shadow-xs'
                       : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800'
                   }`}
-                  title="gemini-4-argon: Deep statutory reasoning & complex legal disputes"
+                  title="gemini-4-argon: Deep statutory reasoning & complex legal disputes (Paid key)"
                 >
                   Complex (4 Argon)
                 </button>
                 <button
-                  onClick={() => setSelectedModel('gemini-3.5-flash-lite')}
+                  onClick={() => setSelectedModel('gemini-3.1-flash-lite')}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                    selectedModel === 'gemini-3.5-flash-lite' || selectedModel === 'gemini-2.0-flash-lite'
+                    selectedModel === 'gemini-3.1-flash-lite'
                       ? 'bg-[#007FFF] text-white shadow-xs'
                       : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800'
                   }`}
-                  title="gemini-3.5-flash-lite: Low-latency fast responses"
+                  title="gemini-3.1-flash-lite: Low-latency fast responses"
                 >
-                  Fast (3.5 Lite)
+                  Fast (3.1 Lite)
                 </button>
               </div>
             </div>

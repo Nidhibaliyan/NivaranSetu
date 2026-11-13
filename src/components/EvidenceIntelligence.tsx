@@ -2,6 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { GrievanceCase, EvidenceItem } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import {
+  resolveExhibitOcrData,
+  hasGenuineOcrContent,
+  ExhibitOcrData,
+} from '../utils/evidenceOcr';
+import {
   Search,
   FileText,
   AlertTriangle,
@@ -34,24 +39,6 @@ import {
 interface EvidenceIntelligenceProps {
   currentCase: GrievanceCase;
   onUpdateCase?: (updated: GrievanceCase) => void;
-}
-
-interface RawOcrData {
-  rawText: string;
-  confidence: number;
-  engine: string;
-  dpi: number;
-  charCount: number;
-  lineCount: number;
-  boundingBoxes: Array<{
-    id: number;
-    text: string;
-    type: 'header' | 'amount' | 'date' | 'id' | 'body';
-    topPercent: number;
-    leftPercent: number;
-    widthPercent: number;
-    heightPercent: number;
-  }>;
 }
 
 export const EvidenceIntelligence: React.FC<EvidenceIntelligenceProps> = ({
@@ -96,178 +83,22 @@ export const EvidenceIntelligence: React.FC<EvidenceIntelligenceProps> = ({
     setTimeout(() => setCopiedRawText(false), 2000);
   };
 
-  // Generate realistic raw OCR text and bounding boxes for the selected exhibit
-  const getMockOcrData = (item?: EvidenceItem): RawOcrData => {
-    if (!item) {
-      return {
-        rawText: 'NO DOCUMENT SELECTED',
-        confidence: 0,
-        engine: 'NivaranSetu Tesseract-OCR v5.3 / Vision API',
-        dpi: 300,
-        charCount: 0,
-        lineCount: 0,
-        boundingBoxes: [],
-      };
-    }
+  const ocrData: ExhibitOcrData = resolveExhibitOcrData(selectedEvidence);
 
-    const titleLower = item.title.toLowerCase();
-    const isSms = titleLower.includes('sms') || item.category === 'screenshot';
-    const isStatement = titleLower.includes('statement') || titleLower.includes('passbook') || item.category === 'bank_statement';
-    const isCyberAck = titleLower.includes('cyber') || titleLower.includes('ack');
-    const isReraAgreement = titleLower.includes('agreement') || titleLower.includes('rera');
-    const isInvoice = titleLower.includes('invoice') || titleLower.includes('receipt');
-
-    if (isSms) {
-      const text = `[SMS HEADER: VM-POWURG]
-TIMESTAMP: 2026-10-28 17:42:10 IST
-FROM: VM-POWURG
-TO: Complainant Mobile
-
-Dear Consumer,
-Your Electricity power connection will be disconnected tonight
-at 9.30 pm from power office because your previous month bill was
-not updated. Please immediately update your bill by calling our
-power officer or install the Discom bill verification utility:
-http://quick-bill-pay.apk/verify?bill=12.00
-Threat level: Urgent / Action required before 21:30 hrs.
-Electricity Department Helpline.`;
-
-      return {
-        rawText: text,
-        confidence: 99.1,
-        engine: 'NivaranSetu High-Res OCR Vision Engine (300 DPI)',
-        dpi: 300,
-        charCount: text.length,
-        lineCount: text.split('\n').length,
-        boundingBoxes: [
-          { id: 1, text: 'VM-POWURG Header', type: 'header', topPercent: 8, leftPercent: 12, widthPercent: 45, heightPercent: 9 },
-          { id: 2, text: 'Timestamp: 2026-10-28 17:42', type: 'date', topPercent: 20, leftPercent: 12, widthPercent: 65, heightPercent: 8 },
-          { id: 3, text: 'Threat Message Body', type: 'body', topPercent: 32, leftPercent: 12, widthPercent: 78, heightPercent: 26 },
-          { id: 4, text: 'quick-bill-pay.apk URL', type: 'id', topPercent: 62, leftPercent: 12, widthPercent: 60, heightPercent: 10 },
-          { id: 5, text: 'Disconnection 21:30 Warning', type: 'amount', topPercent: 76, leftPercent: 12, widthPercent: 70, heightPercent: 12 },
-        ],
-      };
-    }
-
-    if (isStatement) {
-      const text = `======================================================
-APEX BANK OF INDIA - SHIVAJINAGAR PUNE BRANCH
-STATEMENT OF ACCOUNT: SAVINGS BANK (INR)
-A/C NO: **********4910 | IFSC: APEX0001082
-NAME: RAJESH M. JOSHI
-STATEMENT PERIOD: 01-OCT-2026 TO 31-OCT-2026
-------------------------------------------------------
-DATE        PARTICULARS                   CHQ/REF        DEBIT (INR)    CREDIT (INR)   BALANCE (INR)
-2026-10-28  UPI/42890128912/ref-collect92 42890128912    15,000.00      -              82,410.50
-2026-10-28  UPI/42890128955/ref-collect92 42890128955    15,000.00      -              67,410.50
-2026-10-28  UPI/42890129001/ref-collect92 42890129001    12,500.00      -              54,910.50
-------------------------------------------------------
-TOTAL DEBITS: INR 42,500.00 [3 TRANSACTIONS]
-CHANNEL: MOBILE BANKING UPI / BENEFICIARY: ref-collect92@okaxis
-IP ADDRESS OF TRANSACTION: 198.51.100.24 (UNRECOGNIZED LOCATION)
-======================================================`;
-
-      return {
-        rawText: text,
-        confidence: 98.7,
-        engine: 'NivaranSetu Financial Document Parser (300 DPI)',
-        dpi: 300,
-        charCount: text.length,
-        lineCount: text.split('\n').length,
-        boundingBoxes: [
-          { id: 1, text: 'Apex Bank of India Header', type: 'header', topPercent: 6, leftPercent: 10, widthPercent: 80, heightPercent: 10 },
-          { id: 2, text: 'A/c No: **********4910', type: 'id', topPercent: 18, leftPercent: 10, widthPercent: 45, heightPercent: 8 },
-          { id: 3, text: 'Debit 1: ₹15,000.00 (Ref 42890128912)', type: 'amount', topPercent: 38, leftPercent: 8, widthPercent: 84, heightPercent: 11 },
-          { id: 4, text: 'Debit 2: ₹15,000.00 (Ref 42890128955)', type: 'amount', topPercent: 50, leftPercent: 8, widthPercent: 84, heightPercent: 11 },
-          { id: 5, text: 'Debit 3: ₹12,500.00 (Ref 42890129001)', type: 'amount', topPercent: 62, leftPercent: 8, widthPercent: 84, heightPercent: 11 },
-          { id: 6, text: 'Total Disputed: INR 42,500.00', type: 'amount', topPercent: 76, leftPercent: 10, widthPercent: 78, heightPercent: 10 },
-        ],
-      };
-    }
-
-    if (isCyberAck) {
-      const text = `GOVERNMENT OF INDIA - MINISTRY OF HOME AFFAIRS
-NATIONAL CYBER CRIME REPORTING PORTAL (cybercrime.gov.in)
-OFFICIAL ACKNOWLEDGEMENT SLIP
-------------------------------------------------------
-Acknowledgement Number: 2026-MH-94812
-Date & Time of Registration: 28-10-2026 19:15:33 IST
-Complainant Name: Rajesh M. Joshi
-Incident Category: Financial Fraud - UPI / Remote Access Malware
-Disputed Amount Debited: ₹42,500.00
-Suspect Payment Handle: ref-collect92@okaxis
-Bank Remittance Account: Apex Bank of India Savings A/c **4910
-Police Jurisdiction: Cyber Crime Cell, Shivajinagar Police Station
-Legal Statute: Section 66D IT Act 2008 & Section 420 IPC
-Status: Assigned to Investigating Officer (IO)`;
-
-      return {
-        rawText: text,
-        confidence: 99.4,
-        engine: 'NivaranSetu Government Docket Scanner (300 DPI)',
-        dpi: 300,
-        charCount: text.length,
-        lineCount: text.split('\n').length,
-        boundingBoxes: [
-          { id: 1, text: 'National Cyber Crime Reporting Portal', type: 'header', topPercent: 7, leftPercent: 10, widthPercent: 80, heightPercent: 12 },
-          { id: 2, text: 'Ack No: 2026-MH-94812', type: 'id', topPercent: 22, leftPercent: 10, widthPercent: 55, heightPercent: 9 },
-          { id: 3, text: 'Date: 28-10-2026 19:15:33', type: 'date', topPercent: 33, leftPercent: 10, widthPercent: 60, heightPercent: 9 },
-          { id: 4, text: 'Amount: ₹42,500.00', type: 'amount', topPercent: 54, leftPercent: 10, widthPercent: 50, heightPercent: 9 },
-          { id: 5, text: 'Section 66D IT Act / 420 IPC', type: 'id', topPercent: 75, leftPercent: 10, widthPercent: 70, heightPercent: 10 },
-        ],
-      };
-    }
-
-    // Default generic extraction
-    const genericText = `EXHIBIT TITLE: ${item.title.toUpperCase()}
-FILENAME: ${item.fileName}
-DATE RECORDED: ${item.uploadDate}
-HASH (SHA-256): ${item.sha256Hash}
-------------------------------------------------------
-EXTRACTED IDENTIFIERS:
-${item.ocrExtracted.identifiers.map((id) => `• ${id}`).join('\n') || '• No explicit reference number'}
-
-EXTRACTED MONETARY AMOUNTS:
-${item.ocrExtracted.amounts.map((am) => `• ${am}`).join('\n') || '• Nil monetary entries'}
-
-EXTRACTED DATES & TIMESTAMPS:
-${item.ocrExtracted.dates.map((d) => `• ${d}`).join('\n') || '• No timestamp detected'}
-
-PARTIES NAMED:
-${item.ocrExtracted.parties.map((p) => `• ${p}`).join('\n') || '• Opposite party'}
-
-DOCUMENT SUMMARY:
-${item.ocrExtracted.summary}`;
-
-    return {
-      rawText: genericText,
-      confidence: 97.5,
-      engine: 'NivaranSetu Multimodal OCR Engine',
-      dpi: 300,
-      charCount: genericText.length,
-      lineCount: genericText.split('\n').length,
-      boundingBoxes: [
-        { id: 1, text: 'Document Title Header', type: 'header', topPercent: 8, leftPercent: 10, widthPercent: 80, heightPercent: 10 },
-        { id: 2, text: 'Document Date & Hash', type: 'date', topPercent: 22, leftPercent: 10, widthPercent: 75, heightPercent: 12 },
-        { id: 3, text: 'Extracted Amounts & Figures', type: 'amount', topPercent: 42, leftPercent: 10, widthPercent: 80, heightPercent: 20 },
-        { id: 4, text: 'Summary of Evidentiary Content', type: 'body', topPercent: 68, leftPercent: 10, widthPercent: 80, heightPercent: 22 },
-      ],
-    };
-  };
-
-  const ocrData = getMockOcrData(selectedEvidence);
-
-  // Trigger simulated OCR scanning animation
+  // Trigger simulated OCR scanning animation ONLY for synthetic demonstration exhibits
   const runSimulatedOcrScan = () => {
+    if (!selectedEvidence || selectedEvidence.hasBlob === true || ocrData.status !== 'demo') {
+      return;
+    }
     setIsOcrProcessing(true);
-    setOcrProgressStep('Initializing OCR Vision Pipeline (300 DPI)...');
+    setOcrProgressStep('Initializing demo walkthrough view...');
 
     setTimeout(() => {
-      setOcrProgressStep('Detecting line boundaries and character matrices...');
+      setOcrProgressStep('Refreshing sample exhibit annotations...');
     }, 400);
 
     setTimeout(() => {
-      setOcrProgressStep('Normalizing transaction figures & identifying timestamps...');
+      setOcrProgressStep('Restoring sample extracted fields...');
     }, 850);
 
     setTimeout(() => {
@@ -355,6 +186,7 @@ ${item.ocrExtracted.summary}`;
 
             {filteredEvidence.map((ev) => {
               const isSelected = ev.id === selectedEvidenceId;
+              const evOcr = resolveExhibitOcrData(ev);
               return (
                 <div
                   key={ev.id}
@@ -383,16 +215,39 @@ ${item.ocrExtracted.summary}`;
 
                   {/* Summary Snippet */}
                   <div className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-2 line-clamp-2">
-                    {ev.ocrExtracted.summary}
+                    {hasGenuineOcrContent(ev)
+                      ? ev.ocrExtracted.summary || ev.rawOcrText || 'OCR text recorded'
+                      : evOcr.status === 'no_text'
+                      ? 'No text detected in this exhibit.'
+                      : evOcr.status === 'failed'
+                      ? 'OCR scan unavailable.'
+                      : 'OCR scan pending — preserved via SHA-256.'}
                   </div>
 
                   {/* Integrity tag */}
                   <div className="mt-2.5 pt-2 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between text-[10px] text-zinc-400 font-mono">
                     <span>Hash: {ev.sha256Hash ? ev.sha256Hash.slice(0, 10) + '...' : 'Metadata'}</span>
-                    <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" />
-                      <span>OCR Processed</span>
-                    </span>
+                    {evOcr.status === 'demo' || evOcr.status === 'processed' ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>{evOcr.status === 'demo' ? 'Sample OCR Fixture' : 'OCR Processed'}</span>
+                      </span>
+                    ) : evOcr.status === 'no_text' ? (
+                      <span className="text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        <span>No Text Detected</span>
+                      </span>
+                    ) : evOcr.status === 'failed' ? (
+                      <span className="text-red-600 dark:text-red-400 font-medium flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        <span>OCR Failed</span>
+                      </span>
+                    ) : (
+                      <span className="text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        <span>OCR Scan Pending</span>
+                      </span>
+                    )}
                   </div>
                 </div>
               );
@@ -455,16 +310,38 @@ ${item.ocrExtracted.summary}`;
               {detailTab === 'ocr_preview' && (
                 <div className="space-y-4">
                   
-                  {/* OCR Toolbar: Confidence score, Re-run button, Bounding boxes toggle */}
+                  {/* OCR Toolbar: Status indicator, Re-run button, Bounding boxes toggle */}
                   <div className="p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs">
                     <div className="flex flex-wrap items-center gap-3">
-                      <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[11px] flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>OCR Confidence: {ocrData.confidence}%</span>
-                      </span>
+                      {ocrData.status === 'demo' ? (
+                        <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[11px] flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Demo OCR Confidence: {ocrData.confidence}%</span>
+                        </span>
+                      ) : ocrData.status === 'processed' ? (
+                        <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[11px] flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>OCR Text Recorded</span>
+                        </span>
+                      ) : ocrData.status === 'no_text' ? (
+                        <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 font-mono font-bold text-[11px] flex items-center gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>No Text Detected</span>
+                        </span>
+                      ) : ocrData.status === 'failed' ? (
+                        <span className="px-2.5 py-1 rounded-lg bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 font-mono font-bold text-[11px] flex items-center gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>OCR Unavailable</span>
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 font-mono font-bold text-[11px] flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>OCR Scan Pending</span>
+                        </span>
+                      )}
 
                       <span className="text-[11px] text-zinc-500 font-mono hidden sm:inline">
-                        Engine: {ocrData.engine} ({ocrData.dpi} DPI)
+                        Engine: {ocrData.engine}
                       </span>
                     </div>
 
@@ -472,27 +349,44 @@ ${item.ocrExtracted.summary}`;
                       {/* Toggle Bounding Boxes Overlay */}
                       <button
                         onClick={() => setShowBoundingBoxes(!showBoundingBoxes)}
-                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
-                          showBoundingBoxes
-                            ? 'border-[#007FFF] bg-[#007FFF]/10 text-[#007FFF]'
-                            : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400'
+                        disabled={ocrData.boundingBoxes.length === 0}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                          ocrData.boundingBoxes.length === 0
+                            ? 'border-zinc-200 dark:border-zinc-800 text-zinc-400 cursor-not-allowed opacity-50'
+                            : showBoundingBoxes
+                            ? 'border-[#007FFF] bg-[#007FFF]/10 text-[#007FFF] cursor-pointer'
+                            : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 cursor-pointer'
                         }`}
-                        title="Toggle OCR text bounding boxes on document image"
+                        title={
+                          ocrData.boundingBoxes.length === 0
+                            ? 'No bounding boxes available for this exhibit'
+                            : 'Toggle OCR text bounding boxes on document image'
+                        }
                       >
-                        {showBoundingBoxes ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                        {showBoundingBoxes && ocrData.boundingBoxes.length > 0 ? (
+                          <CheckSquare className="w-3.5 h-3.5" />
+                        ) : (
+                          <Square className="w-3.5 h-3.5" />
+                        )}
                         <span>Bounding Boxes</span>
                       </button>
 
-                      {/* Re-run Simulated Scan */}
-                      <button
-                        onClick={runSimulatedOcrScan}
-                        disabled={isOcrProcessing}
-                        className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#007FFF] hover:bg-[#0070e0] disabled:opacity-50 text-white text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
-                        title="Simulate re-running OCR document text extraction"
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 ${isOcrProcessing ? 'animate-spin' : ''}`} />
-                        <span>{isOcrProcessing ? 'Scanning...' : 'Re-run OCR'}</span>
-                      </button>
+                      {/* Re-run Simulated Scan (Demo exhibits only) */}
+                      {selectedEvidence.hasBlob !== true && ocrData.status === 'demo' ? (
+                        <button
+                          onClick={runSimulatedOcrScan}
+                          disabled={isOcrProcessing}
+                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#007FFF] hover:bg-[#0070e0] disabled:opacity-50 text-white text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                          title="Replay demo OCR walkthrough"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${isOcrProcessing ? 'animate-spin' : ''}`} />
+                          <span>{isOcrProcessing ? 'Scanning...' : 'Replay Demo'}</span>
+                        </button>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-800 text-zinc-500 text-[11px] font-mono">
+                          {ocrData.hasGenuineOcr ? 'Verified OCR Record' : 'Automated OCR Pending'}
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -556,55 +450,99 @@ ${item.ocrExtracted.summary}`;
                             <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-[#007FFF] to-transparent shadow-[0_0_12px_#007FFF] animate-[scan_1.2s_ease-in-out_infinite] z-20" />
                           )}
 
-                          {/* Watermark / Seal Stamp */}
-                          <div className="absolute right-4 bottom-4 border-2 border-emerald-600/30 rounded-full w-20 h-20 flex items-center justify-center -rotate-12 pointer-events-none text-[8px] font-bold text-emerald-600/40 uppercase tracking-widest text-center leading-none">
-                            OFFICIAL VERIFIED<br />RECORD
-                          </div>
+                          {/* Watermark / Seal Stamp (Only if genuinely verified original) */}
+                          {selectedEvidence.verifiedOriginal && (
+                            <div className="absolute right-4 bottom-4 border-2 border-emerald-600/30 rounded-full w-20 h-20 flex items-center justify-center -rotate-12 pointer-events-none text-[8px] font-bold text-emerald-600/40 uppercase tracking-widest text-center leading-none">
+                              VERIFIED<br />EXHIBIT
+                            </div>
+                          )}
 
                           {/* Visual Content of the Document */}
-                          <div className="space-y-3 relative z-10">
-                            {/* Document Header */}
-                            <div className="border-b border-zinc-200 dark:border-zinc-800 pb-2 flex items-start justify-between">
-                              <div>
-                                <div className="font-bold text-[11px] text-zinc-950 dark:text-white uppercase tracking-wider">
-                                  {selectedEvidence.title}
+                          {selectedEvidence.hasBlob === true && !ocrData.hasGenuineOcr ? (
+                            <div className="space-y-3 relative z-10">
+                              <div className="border-b border-zinc-200 dark:border-zinc-800 pb-2 flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-bold text-[11px] text-zinc-950 dark:text-white uppercase tracking-wider">
+                                    {selectedEvidence.title}
+                                  </div>
+                                  <div className="text-[9px] text-zinc-500">
+                                    FILE: {selectedEvidence.fileName}
+                                  </div>
                                 </div>
-                                <div className="text-[9px] text-zinc-400">
-                                  REF ID: {selectedEvidence.ocrExtracted.identifiers[0] || 'DOC-2026-REF'}
+                                <div className="text-[8px] text-zinc-400 text-right shrink-0">
+                                  UPLOADED: {selectedEvidence.uploadDate}
                                 </div>
                               </div>
-                              <div className="text-[8px] text-zinc-400 text-right">
-                                DATE: {selectedEvidence.ocrExtracted.dates[0] || selectedEvidence.uploadDate}
-                              </div>
-                            </div>
 
-                            {/* Simulated Paragraphs / Rows */}
-                            <div className="space-y-2 text-[9px] text-zinc-700 dark:text-zinc-300">
-                              <p className="leading-snug">
-                                TO WHOMSOEVER IT MAY CONCERN / OFFICIAL PROCEEDING RECORD:
-                              </p>
-                              
-                              <div className="p-2 rounded bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-1">
-                                <div className="flex justify-between">
-                                  <span className="font-semibold">PARTY / ENTITY:</span>
-                                  <span>{selectedEvidence.ocrExtracted.parties[0] || 'Opposite Party'}</span>
+                              <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/20 text-[9px] text-amber-700 dark:text-amber-300 space-y-1">
+                                <div className="font-bold uppercase tracking-wider">
+                                  {ocrData.status === 'no_text'
+                                    ? 'No text detected'
+                                    : ocrData.status === 'failed'
+                                    ? 'OCR scan unavailable'
+                                    : 'OCR scan pending'}
                                 </div>
-                                <div className="flex justify-between">
-                                  <span className="font-semibold">RECORDED SUM:</span>
-                                  <span className="font-bold text-[#007FFF]">
-                                    {selectedEvidence.ocrExtracted.amounts[0] || '₹42,500.00'}
-                                  </span>
-                                </div>
+                                <p className="leading-snug text-zinc-600 dark:text-zinc-300">
+                                  {ocrData.status === 'no_text'
+                                    ? 'No readable text was detected in this uploaded binary file. Relevance and extracted facts cannot be inferred from the image.'
+                                    : 'Genuine OCR text extraction has not been completed for this uploaded binary file yet.'}
+                                </p>
                               </div>
 
                               <div className="space-y-1 text-[8.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                                <div>Summary: {selectedEvidence.ocrExtracted.summary}</div>
+                                <div>Format: {selectedEvidence.fileType} · Size: {selectedEvidence.fileSize}</div>
                                 <div className="font-mono text-[7.5px] break-all pt-1 border-t border-zinc-100 dark:border-zinc-800">
-                                  DIGITAL SIGNATURE: {selectedEvidence.sha256Hash ? `SHA-256:${selectedEvidence.sha256Hash.slice(0, 32)}...` : 'Metadata only (Unverified exhibit)'}
+                                  SHA-256: {selectedEvidence.sha256Hash || 'Pending'}
                                 </div>
                               </div>
                             </div>
-                          </div>
+                          ) : (
+                            <div className="space-y-3 relative z-10">
+                              {/* Document Header */}
+                              <div className="border-b border-zinc-200 dark:border-zinc-800 pb-2 flex items-start justify-between">
+                                <div>
+                                  <div className="font-bold text-[11px] text-zinc-950 dark:text-white uppercase tracking-wider">
+                                    {selectedEvidence.title}
+                                  </div>
+                                  <div className="text-[9px] text-zinc-400">
+                                    REF ID: {selectedEvidence.ocrExtracted.identifiers[0] || 'None extracted'}
+                                  </div>
+                                </div>
+                                <div className="text-[8px] text-zinc-400 text-right">
+                                  DATE: {selectedEvidence.ocrExtracted.dates[0] || selectedEvidence.uploadDate}
+                                </div>
+                              </div>
+
+                              {/* Extracted Metadata Summary */}
+                              <div className="space-y-2 text-[9px] text-zinc-700 dark:text-zinc-300">
+                                <p className="leading-snug">
+                                  {ocrData.status === 'demo'
+                                    ? 'SAMPLE DEMONSTRATION EXHIBIT:'
+                                    : 'RECORDED EXHIBIT METADATA:'}
+                                </p>
+
+                                <div className="p-2 rounded bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-1">
+                                  <div className="flex justify-between gap-2">
+                                    <span className="font-semibold">PARTY / ENTITY:</span>
+                                    <span>{selectedEvidence.ocrExtracted.parties[0] || 'None detected'}</span>
+                                  </div>
+                                  <div className="flex justify-between gap-2">
+                                    <span className="font-semibold">RECORDED SUM:</span>
+                                    <span className="font-bold text-[#007FFF]">
+                                      {selectedEvidence.ocrExtracted.amounts[0] || 'None detected'}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-1 text-[8.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                                  <div>Summary: {selectedEvidence.ocrExtracted.summary || 'None'}</div>
+                                  <div className="font-mono text-[7.5px] break-all pt-1 border-t border-zinc-100 dark:border-zinc-800">
+                                    DIGITAL SIGNATURE: {selectedEvidence.sha256Hash ? `SHA-256:${selectedEvidence.sha256Hash.slice(0, 32)}...` : 'Metadata only (Demo exhibit)'}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
 
                           {/* OVERLAY: Interactive Bounding Boxes */}
                           {showBoundingBoxes && ocrData.boundingBoxes.map((box) => {
@@ -775,7 +713,7 @@ ${item.ocrExtracted.summary}`;
                           Named Entities
                         </div>
                         <div className="text-zinc-900 dark:text-white truncate">
-                          {selectedEvidence.ocrExtracted.parties.join(', ') || 'Opposite Party'}
+                          {selectedEvidence.ocrExtracted.parties.join(', ') || 'None detected'}
                         </div>
                       </div>
                     </div>
@@ -803,7 +741,7 @@ ${item.ocrExtracted.summary}`;
                         <div>Upload Date: <span className="font-mono text-zinc-900 dark:text-white">{selectedEvidence.uploadDate}</span></div>
                         <div>SHA-256 Digest:</div>
                         <div className="font-mono text-[10px] break-all p-1.5 rounded bg-zinc-200/50 dark:bg-zinc-800/80 text-zinc-800 dark:text-zinc-300">
-                          {selectedEvidence.sha256Hash}
+                          {selectedEvidence.sha256Hash || 'Metadata only (No physical upload)'}
                         </div>
                       </div>
                     </div>
@@ -815,10 +753,10 @@ ${item.ocrExtracted.summary}`;
                         <span>AI-Extracted Data (OCR)</span>
                       </div>
                       <div className="space-y-1 text-xs text-zinc-700 dark:text-zinc-300">
-                        <div>Extracted Amounts: <span className="font-semibold text-zinc-900 dark:text-white">{selectedEvidence.ocrExtracted.amounts.join(', ') || 'None'}</span></div>
-                        <div>Extracted Dates: <span className="font-mono text-zinc-900 dark:text-white">{selectedEvidence.ocrExtracted.dates.join(', ') || 'None'}</span></div>
-                        <div>Reference IDs: <span className="font-mono text-zinc-900 dark:text-white">{selectedEvidence.ocrExtracted.identifiers.join(', ') || 'None'}</span></div>
-                        <div>Identified Parties: <span className="text-zinc-900 dark:text-white">{selectedEvidence.ocrExtracted.parties.join(', ') || 'None'}</span></div>
+                        <div>Extracted Amounts: <span className="font-semibold text-zinc-900 dark:text-white">{selectedEvidence.ocrExtracted.amounts.join(', ') || 'None detected'}</span></div>
+                        <div>Extracted Dates: <span className="font-mono text-zinc-900 dark:text-white">{selectedEvidence.ocrExtracted.dates.join(', ') || 'None detected'}</span></div>
+                        <div>Reference IDs: <span className="font-mono text-zinc-900 dark:text-white">{selectedEvidence.ocrExtracted.identifiers.join(', ') || 'None detected'}</span></div>
+                        <div>Identified Parties: <span className="text-zinc-900 dark:text-white">{selectedEvidence.ocrExtracted.parties.join(', ') || 'None detected'}</span></div>
                       </div>
                     </div>
 
@@ -830,7 +768,10 @@ ${item.ocrExtracted.summary}`;
                       Document Evidentiary Purpose
                     </label>
                     <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/80 border border-zinc-200 dark:border-zinc-800 text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed">
-                      {selectedEvidence.ocrExtracted.summary}
+                      {selectedEvidence.ocrExtracted.summary ||
+                        (ocrData.status === 'no_text'
+                          ? 'No text detected in this exhibit.'
+                          : 'OCR scan pending — no summary extracted yet.')}
                     </div>
                   </div>
 

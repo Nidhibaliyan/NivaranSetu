@@ -210,13 +210,15 @@ export default function App() {
     let isCancelled = false;
     const currentReqId = ++currentRequestIdRef.current;
 
-    if (!isAuthenticated || !userProfile?.id) {
-      activeUserUuidRef.current = null;
-      setCases([]);
-      setSelectedCaseId('');
-      setEditingExistingCaseId(null);
-      setIsLoadingCases(false);
-      setCasesError(null);
+    if (!isAuthenticated || !userProfile?.id || isCheckingSession) {
+      if (!isCheckingSession) {
+        activeUserUuidRef.current = null;
+        setCases([]);
+        setSelectedCaseId('');
+        setEditingExistingCaseId(null);
+        setIsLoadingCases(false);
+        setCasesError(null);
+      }
       return;
     }
 
@@ -249,7 +251,7 @@ export default function App() {
     return () => {
       isCancelled = true;
     };
-  }, [isAuthenticated, userProfile?.id]);
+  }, [isAuthenticated, userProfile?.id, isCheckingSession]);
 
   // DEF-07: Explicit case selection only; returns null when no case is selected or ID is invalid
   const selectedCase = selectedCaseId

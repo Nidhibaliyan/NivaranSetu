@@ -63,6 +63,8 @@ export type CaseStage =
   | 'filed_externally'
   | 'escalated';
 
+export type OcrStatus = 'pending' | 'processed' | 'no_text' | 'failed';
+
 export interface EvidenceItem {
   id: string;
   title: string;
@@ -76,12 +78,14 @@ export interface EvidenceItem {
   storageRef?: string;
   rawOcrText?: string;
   hasBlob?: boolean;
+  ocrStatus?: OcrStatus;
   ocrExtracted: {
     dates: string[];
     amounts: string[];
     identifiers: string[];
     parties: string[];
     summary: string;
+    status?: OcrStatus;
   };
   flag?: {
     type: 'inconsistency' | 'duplicate' | 'verified';

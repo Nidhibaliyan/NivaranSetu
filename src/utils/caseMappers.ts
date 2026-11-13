@@ -19,6 +19,7 @@ import {
   TrustCheckRecord,
   NavigatorSession,
   LegalAnalysisResponse,
+  OcrStatus,
 } from '../types';
 
 // =============================================================================
@@ -96,6 +97,7 @@ export interface EvidenceItemRow {
     identifiers: string[];
     parties: string[];
     summary: string;
+    status?: OcrStatus;
   };
   flag: {
     type: 'inconsistency' | 'duplicate' | 'verified';
@@ -433,6 +435,8 @@ export function evidenceToRow(
 
   const formattedSize = item.fileSize?.trim() || formatByteSize(bytes);
 
+  const effectiveOcrStatus = item.ocrStatus || item.ocrExtracted?.status;
+
   return {
     user_id: validUserId,
     case_id: validCaseId,
@@ -454,6 +458,7 @@ export function evidenceToRow(
       identifiers: Array.isArray(item.ocrExtracted?.identifiers) ? item.ocrExtracted.identifiers : [],
       parties: Array.isArray(item.ocrExtracted?.parties) ? item.ocrExtracted.parties : [],
       summary: item.ocrExtracted?.summary || '',
+      ...(effectiveOcrStatus ? { status: effectiveOcrStatus } : {}),
     },
     flag: item.flag || null,
     claim_mapped_to: item.claimMappedTo?.trim() || null,
@@ -467,6 +472,23 @@ export function evidenceToRow(
  * Converts a database evidence_items row to a frontend EvidenceItem.
  */
 export function rowToEvidence(row: EvidenceItemRow): EvidenceItem {
+  const dates = Array.isArray(row.ocr_extracted?.dates) ? row.ocr_extracted.dates : [];
+  const amounts = Array.isArray(row.ocr_extracted?.amounts) ? row.ocr_extracted.amounts : [];
+  const identifiers = Array.isArray(row.ocr_extracted?.identifiers) ? row.ocr_extracted.identifiers : [];
+  const parties = Array.isArray(row.ocr_extracted?.parties) ? row.ocr_extracted.parties : [];
+  const summary = row.ocr_extracted?.summary || '';
+  const hasContent = Boolean(
+    row.raw_ocr_text?.trim() ||
+      dates.length > 0 ||
+      amounts.length > 0 ||
+      identifiers.length > 0 ||
+      parties.length > 0 ||
+      summary.trim().length > 0
+  );
+  const rawStatus = row.ocr_extracted?.status;
+  const resolvedStatus: OcrStatus | undefined =
+    rawStatus || (row.has_blob && !hasContent ? 'pending' : undefined);
+
   return {
     id: row.id,
     title: row.title,
@@ -480,12 +502,14 @@ export function rowToEvidence(row: EvidenceItemRow): EvidenceItem {
     storageRef: row.storage_ref || undefined,
     rawOcrText: row.raw_ocr_text || undefined,
     hasBlob: Boolean(row.has_blob),
+    ...(resolvedStatus ? { ocrStatus: resolvedStatus } : {}),
     ocrExtracted: {
-      dates: Array.isArray(row.ocr_extracted?.dates) ? row.ocr_extracted.dates : [],
-      amounts: Array.isArray(row.ocr_extracted?.amounts) ? row.ocr_extracted.amounts : [],
-      identifiers: Array.isArray(row.ocr_extracted?.identifiers) ? row.ocr_extracted.identifiers : [],
-      parties: Array.isArray(row.ocr_extracted?.parties) ? row.ocr_extracted.parties : [],
-      summary: row.ocr_extracted?.summary || '',
+      dates,
+      amounts,
+      identifiers,
+      parties,
+      summary,
+      ...(resolvedStatus ? { status: resolvedStatus } : {}),
     },
     flag: row.flag || undefined,
     claimMappedTo: row.claim_mapped_to || undefined,

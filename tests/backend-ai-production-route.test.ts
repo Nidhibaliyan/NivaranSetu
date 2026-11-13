@@ -126,7 +126,7 @@ function terminateProcessTree(child: ChildProcess): void {
     }
   } else {
     try {
-      process.kill(pid, 'SIGKILL');
+      execSync(`pkill -P ${pid} 2>/dev/null || true; kill -9 ${pid} 2>/dev/null || true`, { stdio: 'ignore' });
     } catch {}
   }
 }
