@@ -11,6 +11,10 @@ create table if not exists public.legal_documents (
   section_ref text,
   language text not null default 'en',
   effective_date date,
+  source_sha256 text,
+  verified_by text,
+  verification_note text,
+  verified_at timestamptz,
   source_verified boolean not null default false,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
@@ -18,6 +22,12 @@ create table if not exists public.legal_documents (
   constraint legal_documents_language_check
     check (language in ('en','hi','bn','mr','ta','te','kn','ml','gu','pa','or','ur'))
 );
+
+-- Keep this migration safe for projects where the initial RAG tables were created earlier.
+alter table public.legal_documents add column if not exists source_sha256 text;
+alter table public.legal_documents add column if not exists verified_by text;
+alter table public.legal_documents add column if not exists verification_note text;
+alter table public.legal_documents add column if not exists verified_at timestamptz;
 
 create table if not exists public.legal_document_chunks (
   id uuid primary key default gen_random_uuid(),
