@@ -2037,8 +2037,7 @@ app.post(
   }
 );
 
-// Apply the general JSON parser to routes registered below
-// LEGAL RAG: Authenticated retrieval + privileged source ingestion
+// LEGAL RAG: Dedicated 5 MB parser + authenticated retrieval + privileged ingestion
 // -------------------------------------------------------------
 const legalRagAi = getAiClient(25000);
 const legalRagSupabaseConfig = resolveSupabaseConfig();
