@@ -65,13 +65,19 @@ function splitIntoChunks(text: string, maxChars = 1400, overlap = 180): string[]
   return chunks;
 }
 
-async function embed(ai: GoogleGenAI, model: string, text: string): Promise<number[]> {
-  const response = await ai.models.embedContent({ model, contents: text });
-  const vector = response.embeddings?.[0]?.values;
-  if (!vector || vector.length !== 3072) {
-    throw new Error(`Embedding model returned an unexpected vector dimension (${vector?.length ?? 0}); expected 3072.`);
+async function embedMany(ai: GoogleGenAI, model: string, texts: string[]): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const response = await ai.models.embedContent({ model, contents: texts });
+  const vectors = (response.embeddings || []).map((item) => item.values || []);
+  if (vectors.length !== texts.length || vectors.some((vector) => vector.length !== 3072)) {
+    throw new Error('Embedding model returned an unexpected batch size or vector dimension; expected one 3072-dimensional vector per chunk.');
   }
-  return vector;
+  return vectors;
+}
+
+async function embed(ai: GoogleGenAI, model: string, text: string): Promise<number[]> {
+  const vectors = await embedMany(ai, model, [text]);
+  return vectors[0];
 }
 
 export function createLegalRagRouter(deps: LegalRagDependencies): Router {
@@ -97,8 +103,8 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
     const verificationNote = typeof body.verificationNote === 'string' ? body.verificationNote.trim() : '';
     const text = typeof body.text === 'string' ? body.text.trim() : '';
     const language = (typeof body.language === 'string' ? body.language : 'en') as LanguageCode;
-    if (!title || !sourceUrl || !authority || !verifiedBy || verificationNote.length < 20 || text.length < 100 || !(language in LANGUAGES)) {
-      return res.status(400).json({ success: false, error: 'INVALID_DOCUMENT', message: 'title, official sourceUrl, authority, verifiedBy, a verificationNote (at least 20 characters), language and at least 100 characters of source text are required.' });
+    if (!title || !sourceUrl || !authority || !verifiedBy || verificationNote.length < 20 || text.length < 100 || text.length > 250000 || !(language in LANGUAGES)) {
+      return res.status(400).json({ success: false, error: 'INVALID_DOCUMENT', message: 'title, official sourceUrl, authority, verifiedBy, a verificationNote (at least 20 characters), language and source text between 100 and 250,000 characters is required.' });
     }
     try {
       const url = new URL(sourceUrl);
@@ -140,14 +146,18 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
     try {
       const chunks = splitIntoChunks(text);
       const rows = [];
-      for (let index = 0; index < chunks.length; index++) {
-        const vector = await embed(deps.ai, embeddingModel, chunks[index]);
-        rows.push({
-          document_id: doc.id,
-          chunk_index: index,
-          content: chunks[index],
-          language,
-          embedding: JSON.stringify(vector),
+      const embeddingBatchSize = 32;
+      for (let start = 0; start < chunks.length; start += embeddingBatchSize) {
+        const batch = chunks.slice(start, start + embeddingBatchSize);
+        const vectors = await embedMany(deps.ai, embeddingModel, batch);
+        batch.forEach((chunk, offset) => {
+          rows.push({
+            document_id: doc.id,
+            chunk_index: start + offset,
+            content: chunk,
+            language,
+            embedding: JSON.stringify(vectors[offset]),
+          });
         });
       }
       if (rows.length === 0) throw new Error('No text chunks were produced from the supplied document.');
