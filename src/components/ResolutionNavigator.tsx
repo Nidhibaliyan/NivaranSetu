@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GrievanceCase, NavigatorSession } from '../types';
+import { GrievanceCase, GroundingSource, NavigatorSession } from '../types';
 import { AUTHORITY_GUIDES, INITIAL_CASES } from '../sampleData';
 import { useLanguage } from '../context/LanguageContext';
 import {
@@ -14,6 +14,11 @@ import {
 } from '../data/portalWalkthroughs';
 import { createCustodyEvent } from '../utils/caseStorage';
 import { saveNavigatorSession, fetchNavigatorSession } from '../utils/caseRepository';
+import {
+  CHAT_CLIENT_TIMEOUT_MS,
+  fetchWithTimeout,
+  formatAiErrorMessage,
+} from '../utils/aiClientUtils';
 import {
   Compass,
   ExternalLink,
@@ -273,6 +278,7 @@ export const ResolutionNavigator: React.FC<ResolutionNavigatorProps> = ({
   // Step 5: AI assistant prompt in Step 5
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiResponse, setAiResponse] = useState<string | null>(null);
+  const [aiSources, setAiSources] = useState<GroundingSource[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
   // Step 7: Walkthrough sub-page index
@@ -372,16 +378,54 @@ ${effectiveCase.complaintDraft?.formalBody || effectiveCase.description}`;
     setTimeout(() => setCopiedAll(false), 2200);
   };
 
-  // AI clarification handler for Step 5
-  const handleAskAi = () => {
-    if (!aiPrompt.trim()) return;
+  // AI clarification handler for Step 5 (live Search Grounding via gemini-4-hydrogen)
+  const handleAskAi = async () => {
+    const trimmedPrompt = aiPrompt.trim();
+    if (!trimmedPrompt || isAiLoading) return;
     setIsAiLoading(true);
-    setTimeout(() => {
-      setAiResponse(
-        `Based on ${activeGuide.authorityName} regulations, cite Rule 11.2 of the statutory scheme. Ensure you explicitly pray for: (1) Principal restitution of ₹${(effectiveCase.disputedAmount || 0).toLocaleString('en-IN')}, (2) Compensation for administrative harassment under Section 14, and (3) Reversal of unauthorized penalty charges.`
+    setAiSources([]);
+    try {
+      const contextualPrompt = [
+        `Target Statutory Authority: ${activeGuide.authorityName} (${activeGuide.officialPortal})`,
+        `Case Category: ${effectiveCase.category}`,
+        `Disputed Amount: ₹${(effectiveCase.disputedAmount || 0).toLocaleString('en-IN')}`,
+        `Citizen Question: ${trimmedPrompt}`,
+        'Provide current, accurate portal filing requirements, relevant statutory rules or circulars, and exact relief prayer tips in clear plain language.',
+      ].join('\n');
+
+      const res = await fetchWithTimeout(
+        '/api/gemini/chat',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: [{ role: 'user', text: contextualPrompt }],
+            requestedModel: 'gemini-4-hydrogen',
+            useSearchGrounding: true,
+          }),
+        },
+        CHAT_CLIENT_TIMEOUT_MS
       );
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `Server responded with HTTP ${res.status}`);
+      }
+
+      setAiResponse(data.text || 'No response generated.');
+      const sources: GroundingSource[] = Array.isArray(data.groundingSources)
+        ? data.groundingSources.filter(
+            (s: any): s is GroundingSource => Boolean(s && typeof s.uri === 'string' && s.uri.trim())
+          )
+        : [];
+      setAiSources(sources);
+    } catch (err: any) {
+      const reason = formatAiErrorMessage(err, 'Unable to reach Gemini right now.');
+      setAiResponse(`Live Search Grounding unavailable (${reason}). Please verify current filing instructions directly on ${activeGuide.officialPortal}.`);
+      setAiSources([]);
+    } finally {
       setIsAiLoading(false);
-    }, 800);
+    }
   };
 
   // Save session state helper persisting directly to Supabase navigator_sessions
@@ -1035,9 +1079,15 @@ ${effectiveCase.complaintDraft?.formalBody || effectiveCase.description}`;
 
           {/* AI Grievance Assistant Clarification Bar */}
           <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-50/50 via-white to-blue-50/30 dark:from-blue-950/20 dark:via-zinc-900/30 dark:to-blue-950/10 border border-blue-200 dark:border-blue-900/40 space-y-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#007FFF]">
-              <Sparkles className="w-4 h-4 text-[#FF2E93]" />
-              <span>AI Complaint Optimizer (Gemini)</span>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-[#007FFF]">
+                <Sparkles className="w-4 h-4 text-[#FF2E93]" />
+                <span>AI Complaint Optimizer (Gemini 4 Hydrogen + Google Search)</span>
+              </div>
+              <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                <Globe className="w-3 h-3" />
+                <span>Search Grounded</span>
+              </span>
             </div>
 
             <div className="flex gap-2">
@@ -1046,7 +1096,7 @@ ${effectiveCase.complaintDraft?.formalBody || effectiveCase.description}`;
                 value={aiPrompt}
                 onChange={(e) => setAiPrompt(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAskAi()}
-                placeholder="Ask how to claim interest or reference statutory compensation provisions..."
+                placeholder="Ask about current portal fees, deadlines, interest claims, or statutory provisions..."
                 className="flex-1 text-xs px-3.5 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF]"
               />
               <button
@@ -1059,8 +1109,30 @@ ${effectiveCase.complaintDraft?.formalBody || effectiveCase.description}`;
             </div>
 
             {aiResponse && (
-              <div className="p-3 rounded-xl bg-white dark:bg-zinc-900 border border-blue-100 dark:border-blue-900/30 text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed animate-fade-in">
-                {aiResponse}
+              <div className="p-3 rounded-xl bg-white dark:bg-zinc-900 border border-blue-100 dark:border-blue-900/30 text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed space-y-2.5 animate-fade-in">
+                <div className="whitespace-pre-wrap">{aiResponse}</div>
+                {aiSources.length > 0 && (
+                  <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-1">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                      <Globe className="w-3 h-3" />
+                      <span>Grounded Web Sources</span>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {aiSources.slice(0, 5).map((src, sIdx) => (
+                        <a
+                          key={`${src.uri}-${sIdx}`}
+                          href={src.uri}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-[11px] text-[#007FFF] hover:underline truncate"
+                        >
+                          <ExternalLink className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{src.title}</span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

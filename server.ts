@@ -1,4 +1,4 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
@@ -7,19 +7,19 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import { GoogleGenAI, LiveServerMessage, Modality, ThinkingLevel, Type } from '@google/genai';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { LiveVoiceManager, getClientIp } from './src/utils/liveVoiceLimits';
+import { GoogleGenAI, type LiveServerMessage, Modality, ThinkingLevel, Type } from '@google/genai';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { LiveVoiceManager, getClientIp } from './src/utils/liveVoiceLimits.ts';
 import {
   evaluateTemporalJurisdiction,
   evaluateRbiRegulatoryRemedies,
   evaluateCpaEligibility,
   evaluateOffenceApplicability,
-  TimelineEventItem,
-  CaseFactualContext,
-  RbiEvaluationInput,
-  CpaEvaluationInput,
-} from './src/utils/legalAnalysisEngine';
+  type TimelineEventItem,
+  type CaseFactualContext,
+  type RbiEvaluationInput,
+  type CpaEvaluationInput,
+} from './src/utils/legalAnalysisEngine.ts';
 import {
   validateAndNormalizeUpiCollectInput,
   validateAndNormalizeTransactionInput,
@@ -30,9 +30,10 @@ import {
   buildTransactionGeminiPrompt,
   validateAndMergeUpiCollectResponse,
   validateAndMergeTransactionResponse,
+  redactSensitiveFinancialData,
   UPI_PIN_SAFETY_NOTICE,
   TRANSACTION_AI_DISCLAIMER,
-} from './src/utils/trustCheckAnalysis';
+} from './src/utils/trustCheckAnalysis.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -397,6 +398,41 @@ function isTimeoutError(err: any): boolean {
     err?.status === 408 ||
     err?.status === 504
   );
+}
+
+export interface GroundingSource {
+  title: string;
+  uri: string;
+}
+
+/**
+ * Extracts verified web source links and search queries from Gemini Google Search groundingMetadata.
+ */
+function extractGroundingSources(response: any): {
+  groundingSources: GroundingSource[];
+  webSearchQueries: string[];
+} {
+  const metadata = response?.candidates?.[0]?.groundingMetadata;
+  const chunks = Array.isArray(metadata?.groundingChunks) ? metadata.groundingChunks : [];
+  const seen = new Set<string>();
+  const groundingSources: GroundingSource[] = [];
+
+  for (const chunk of chunks) {
+    const uri = typeof chunk?.web?.uri === 'string' ? chunk.web.uri.trim() : '';
+    if (!uri || seen.has(uri)) continue;
+    seen.add(uri);
+    const title =
+      typeof chunk?.web?.title === 'string' && chunk.web.title.trim()
+        ? chunk.web.title.trim()
+        : uri;
+    groundingSources.push({ title, uri });
+  }
+
+  const webSearchQueries = Array.isArray(metadata?.webSearchQueries)
+    ? metadata.webSearchQueries.filter((q: unknown): q is string => typeof q === 'string' && Boolean(q.trim()))
+    : [];
+
+  return { groundingSources, webSearchQueries };
 }
 
 /**
@@ -876,7 +912,7 @@ app.post(
         });
       }
 
-      const { messages, taskType = 'general', requestedModel } = req.body || {};
+      const { messages, taskType = 'general', requestedModel, useSearchGrounding = false } = req.body || {};
 
       // Safeguard 1: Strict request validation
       if (!Array.isArray(messages) || messages.length === 0) {
@@ -915,12 +951,17 @@ app.post(
         typeof requestedModel === 'string' && /^[a-zA-Z0-9_.-]{1,64}$/.test(requestedModel)
           ? requestedModel
           : undefined;
+      const shouldUseSearchGrounding = useSearchGrounding === true;
 
       // Safeguard 2: Enforce server-defined system instructions and block client overrides
-      const effectiveSystemInstruction = SYSTEM_INSTRUCTION;
+      const effectiveSystemInstruction = shouldUseSearchGrounding
+        ? `${SYSTEM_INSTRUCTION}\n- When Google Search grounding is enabled, verify up-to-date official Indian portal URLs, statutory deadlines, helplines, and regulatory schemes from search results without fabricating links.`
+        : SYSTEM_INSTRUCTION;
 
       const deadline = Date.now() + CHAT_TOTAL_TIMEOUT_MS;
-      const candidates = resolveModelCandidates(validRequestedModel, validTaskType);
+      const candidates = shouldUseSearchGrounding
+        ? ['gemini-4-hydrogen']
+        : resolveModelCandidates(validRequestedModel, validTaskType);
       let lastError: any = null;
       let response: any = null;
       let actualModelUsed = candidates[0];
@@ -945,6 +986,9 @@ app.post(
           };
           if (model === 'gemini-4-hydrogen' || model === 'gemini-4-argon' || model === 'gemini-4-carbon') {
             modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+          }
+          if (shouldUseSearchGrounding) {
+            modelConfig.tools = [{ googleSearch: {} }];
           }
           response = await attemptAi.models.generateContent({
             model,
@@ -975,11 +1019,18 @@ app.post(
         throw lastError || new Error('All model candidates failed');
       }
 
+      const { groundingSources, webSearchQueries } = shouldUseSearchGrounding
+        ? extractGroundingSources(response)
+        : { groundingSources: [], webSearchQueries: [] };
+
       res.json({
         text: response.text || '',
         model: actualModelUsed,
         modelUsed: actualModelUsed,
         configured: true,
+        searchGrounded: shouldUseSearchGrounding && groundingSources.length > 0,
+        groundingSources,
+        webSearchQueries,
       });
     } catch (error: any) {
       console.error('Chat generation error:', maskSensitive(error?.message || String(error)));
@@ -2036,6 +2087,96 @@ app.post(
   }
 );
 
+app.post(
+  '/api/gemini/trustcheck/web-verify',
+  trustCheckLimiter,
+  generalBodyParser,
+  verifySupabaseAuth,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { identifier, identifierType = 'other' } = req.body || {};
+      if (typeof identifier !== 'string' || !identifier.trim() || identifier.trim().length > 500) {
+        return res.status(400).json({
+          error: 'VALIDATION_ERROR',
+          message: 'Please provide a valid identifier or URL (up to 500 characters) for Google Search verification.',
+        });
+      }
+
+      const validTypes = new Set(['upi', 'phone', 'bank_account', 'url', 'email', 'other']);
+      const normalizedType = validTypes.has(String(identifierType)) ? String(identifierType) : 'other';
+      const { sanitizedText, redacted } = redactSensitiveFinancialData(identifier.trim());
+
+      const aiOverride = req.app?.locals?.geminiAiClient;
+      const ai = aiOverride !== undefined ? aiOverride : getAiClient(TRUSTCHECK_PER_ATTEMPT_TIMEOUT_MS);
+
+      if (!ai) {
+        return res.status(503).json({
+          error: 'AI_UNAVAILABLE',
+          message: 'Live Google Search verification is unavailable because Gemini is not configured.',
+        });
+      }
+
+      const verificationPrompt = [
+        'Use Google Search to check for public safety advisories, scam reports, official regulatory warnings (RBI Sachet, I4C / cybercrime.gov.in, TRAI, SEBI, CERT-In), or official domain/entity legitimacy for this citizen-submitted query in India.',
+        `Identifier Type: ${normalizedType}`,
+        `Submitted Identifier/Query: "${sanitizedText}"`,
+        'Rules:',
+        '- State clearly what public search results confirm or warn about, and clearly state if no public scam reports or official listings are found.',
+        '- NEVER claim that an absence of scam reports proves an entity is authentic or safe.',
+        '- NEVER fabricate police records, FIRs, or NPCI/bank database lookups.',
+        '- Keep the response concise (under 150 words) in plain, citizen-friendly language.',
+      ].join('\n');
+
+      const aiResponse = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: [{ role: 'user', parts: [{ text: verificationPrompt }] }],
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          tools: [{ googleSearch: {} }],
+          httpOptions: {
+            timeout: TRUSTCHECK_PER_ATTEMPT_TIMEOUT_MS,
+          },
+          abortSignal: AbortSignal.timeout(TRUSTCHECK_PER_ATTEMPT_TIMEOUT_MS),
+        },
+      });
+
+      const summary = typeof aiResponse?.text === 'string' ? aiResponse.text.trim() : '';
+      if (!summary) {
+        return res.status(502).json({
+          error: 'EMPTY_AI_RESPONSE',
+          message: 'Live web verification returned an empty response. Please try again.',
+        });
+      }
+
+      const { groundingSources, webSearchQueries } = extractGroundingSources(aiResponse);
+
+      return res.status(200).json({
+        success: true,
+        modelUsed: 'gemini-4-hydrogen',
+        summary,
+        groundingSources,
+        webSearchQueries,
+        sensitiveDataRedacted: redacted,
+        disclaimer:
+          'Grounded via Google Search (gemini-4-hydrogen). Absence of public complaints does not confirm authenticity; always verify through official bank or government portals.',
+        verifiedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      if (isTimeoutError(err)) {
+        return res.status(504).json({
+          error: 'AI_TIMEOUT',
+          message: 'Live Google Search verification timed out. Please retry.',
+        });
+      }
+      console.error('TrustCheck web-verify error:', maskSensitive(err?.message || String(err)));
+      return res.status(502).json({
+        error: 'WEB_VERIFY_ERROR',
+        message: 'Unable to complete live Google Search verification right now.',
+      });
+    }
+  }
+);
+
 // Apply the general JSON parser to routes registered below
 app.use(generalBodyParser);
 
@@ -2351,18 +2492,26 @@ app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
 // Vite middleware in dev or static files in production
 async function setupVite() {
   if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
-    });
+    try {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true, hmr: false },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+      return;
+    } catch (err: any) {
+      console.warn(
+        '[Server] Vite dev middleware unavailable; falling back to static dist/ serving:',
+        maskSensitive(err?.message || String(err))
+      );
+    }
   }
+  const distDir = path.resolve(__dirname, 'dist');
+  app.use(express.static(distDir));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.resolve(distDir, 'index.html'));
+  });
 }
 
 const isDirectRun = Boolean(

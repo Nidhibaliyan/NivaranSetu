@@ -3,7 +3,7 @@ import type {
   RbiEvaluationResult,
   CpaEvaluationResult,
   OffenceAssessmentResult,
-} from './utils/legalAnalysisEngine';
+} from './utils/legalAnalysisEngine.ts';
 
 export type {
   TemporalEvaluationResult,
@@ -426,6 +426,11 @@ export interface LegalAnalysisResponse {
   modelUsed: string;
   synthesis: string;
   findings: LegalAnalysisFindings;
+}
+
+export interface GroundingSource {
+  title: string;
+  uri: string;
 }
 
 export interface LegalAnalysisErrorResponse {

@@ -20,8 +20,11 @@ import {
   AlertTriangle,
   UploadCloud,
   FileAudio,
-  RotateCcw
+  RotateCcw,
+  Globe,
+  ExternalLink
 } from 'lucide-react';
+import type { GroundingSource } from '../types';
 import {
   MicrophoneRecorder,
   floatTo16BitPCM,
@@ -48,6 +51,8 @@ interface ChatMessage {
   text: string;
   timestamp: string;
   modelUsed?: string;
+  searchGrounded?: boolean;
+  groundingSources?: GroundingSource[];
   quickAction?: {
     label: string;
     tab: string;
@@ -66,6 +71,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
   // Model selection state
   // gemini-4-hydrogen for general tasks, gemini-4-argon for complex legal tasks, gemini-3.1-flash-lite for fast tasks
   const [selectedModel, setSelectedModel] = useState<ModelType>('gemini-4-hydrogen');
+  const [useSearchGrounding, setUseSearchGrounding] = useState<boolean>(true);
 
   // Audio transcription with gemini-3.5-transcribe
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -382,6 +388,8 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
         return;
       }
 
+      const effectiveUseSearch = useSearchGrounding && selectedModel === 'gemini-4-hydrogen';
+
       const res = await fetchWithTimeout(
         '/api/gemini/chat',
         {
@@ -390,6 +398,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
           body: JSON.stringify({
             messages: chatHistory,
             requestedModel: selectedModel,
+            useSearchGrounding: effectiveUseSearch,
             taskType:
               selectedModel === 'gemini-4-argon'
                 ? 'complex'
@@ -422,12 +431,20 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
         quickAction = { label: 'Explore Resolution Navigator', tab: 'navigator' };
       }
 
+      const groundingSources: GroundingSource[] = Array.isArray(data.groundingSources)
+        ? data.groundingSources.filter(
+            (s: any): s is GroundingSource => Boolean(s && typeof s.uri === 'string' && s.uri.trim())
+          )
+        : [];
+
       const assistantMsg: ChatMessage = {
         id: `ast-${Date.now()}`,
         sender: 'assistant',
         text: data.text,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         modelUsed: data.modelUsed || selectedModel,
+        searchGrounded: Boolean(data.searchGrounded || groundingSources.length > 0),
+        groundingSources,
         quickAction,
       };
 
@@ -852,8 +869,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
 
           {/* Model Selection Toolbar */}
           {!isLiveMode && (
-            <div className="px-3 py-1.5 bg-zinc-100/60 dark:bg-zinc-900/40 border-b border-zinc-200/60 dark:border-zinc-800/60 flex items-center justify-between text-[11px]">
-              <span className="text-zinc-500 font-medium">Gemini Model:</span>
+            <div className="px-3 py-1.5 bg-zinc-100/60 dark:bg-zinc-900/40 border-b border-zinc-200/60 dark:border-zinc-800/60 flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => setSelectedModel('gemini-4-hydrogen')}
@@ -867,7 +883,10 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
                   General (4 Hydrogen)
                 </button>
                 <button
-                  onClick={() => setSelectedModel('gemini-4-argon')}
+                  onClick={() => {
+                    setSelectedModel('gemini-4-argon');
+                    setUseSearchGrounding(false);
+                  }}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
                     selectedModel === 'gemini-4-argon'
                       ? 'bg-[#007FFF] text-white shadow-xs'
@@ -878,7 +897,10 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
                   Complex (4 Argon)
                 </button>
                 <button
-                  onClick={() => setSelectedModel('gemini-3.1-flash-lite')}
+                  onClick={() => {
+                    setSelectedModel('gemini-3.1-flash-lite');
+                    setUseSearchGrounding(false);
+                  }}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
                     selectedModel === 'gemini-3.1-flash-lite'
                       ? 'bg-[#007FFF] text-white shadow-xs'
@@ -889,6 +911,25 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
                   Fast (3.1 Lite)
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !useSearchGrounding;
+                  setUseSearchGrounding(next);
+                  if (next) {
+                    setSelectedModel('gemini-4-hydrogen');
+                  }
+                }}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors cursor-pointer ${
+                  useSearchGrounding && selectedModel === 'gemini-4-hydrogen'
+                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
+                    : 'text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800'
+                }`}
+                title="Ground answers with live Google Search via gemini-4-hydrogen"
+              >
+                <Globe className="w-3 h-3" />
+                <span>Search Grounding</span>
+              </button>
             </div>
           )}
 
@@ -1011,13 +1052,38 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
                     >
                       <div className="whitespace-pre-wrap">{m.text}</div>
 
+                      {/* Grounded Google Search Sources */}
+                      {m.sender === 'assistant' && m.groundingSources && m.groundingSources.length > 0 && (
+                        <div className="mt-2.5 pt-2 border-t border-zinc-200/60 dark:border-zinc-700/60 space-y-1">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                            <Globe className="w-3 h-3" />
+                            <span>Verified Web Sources (Google Search)</span>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            {m.groundingSources.slice(0, 5).map((src, sIdx) => (
+                              <a
+                                key={`${src.uri}-${sIdx}`}
+                                href={src.uri}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-[11px] text-[#007FFF] hover:underline truncate"
+                                title={src.uri}
+                              >
+                                <ExternalLink className="w-3 h-3 shrink-0" />
+                                <span className="truncate">{src.title}</span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Footer: timestamp + model tag + TTS listen */}
                       <div className="flex items-center justify-between pt-2 mt-2 border-t border-zinc-200/50 dark:border-zinc-700/50 text-[10px] text-zinc-500 dark:text-zinc-400 gap-2">
                         <div className="flex items-center gap-1.5">
                           <span className="font-mono">{m.timestamp}</span>
                           {m.modelUsed && (
                             <span className="px-1.5 py-0.2 rounded bg-zinc-200/70 dark:bg-zinc-700/50 text-zinc-600 dark:text-zinc-300 font-mono text-[9px]">
-                              {m.modelUsed}
+                              {m.modelUsed}{m.searchGrounded ? ' + Search' : ''}
                             </span>
                           )}
                         </div>

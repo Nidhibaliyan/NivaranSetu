@@ -16,9 +16,9 @@ import {
   IT_ACT_CATALOGUE,
   CPA_CATALOGUE,
   RBI_COMMERCIAL_BANKS_CATALOGUE,
-  StatutoryCatalogueEntry,
-  RbiParagraphEntry,
-} from '../data/statutoryCatalogue';
+  type StatutoryCatalogueEntry,
+  type RbiParagraphEntry,
+} from '../data/statutoryCatalogue.ts';
 
 // -----------------------------------------------------------------------------
 // TYPES & INTERFACES

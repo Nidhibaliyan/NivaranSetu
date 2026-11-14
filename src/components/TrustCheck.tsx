@@ -15,6 +15,8 @@ import {
   DeterministicFallbackPayload,
   readTrustCheckScreenshotFile,
   TrustCheckApiError,
+  TrustCheckWebVerifyResult,
+  verifyIdentifierWithWebSearch,
 } from '../utils/trustCheckClient';
 import { useLanguage } from '../context/LanguageContext';
 import {
@@ -40,6 +42,8 @@ import {
   X,
   ReceiptIndianRupee,
   ScanSearch,
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { GuidedNavigationHeader } from './GuidedNavigationHeader';
 
@@ -387,6 +391,10 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
   const [activeResult, setActiveResult] = useState<TrustCheckRecord | null>(SAMPLE_TRUST_CHECK_RECORDS[1]);
   const [isSearching, setIsSearching] = useState(false);
   const [showNextStepsHelp, setShowNextStepsHelp] = useState(false);
+  const [isVerifyingWeb, setIsVerifyingWeb] = useState(false);
+  const [webVerifyResult, setWebVerifyResult] = useState<TrustCheckWebVerifyResult | null>(null);
+  const [webVerifyError, setWebVerifyError] = useState<string | null>(null);
+  const webVerifyAbortRef = useRef<AbortController | null>(null);
 
   // --- Tab 2: Fake UPI Collect Request Detection State ---
   const [collectMessage, setCollectMessage] = useState('');
@@ -421,6 +429,7 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
     return () => {
       collectAbortRef.current?.abort();
       txnAbortRef.current?.abort();
+      webVerifyAbortRef.current?.abort();
     };
   }, []);
 
@@ -429,6 +438,9 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
     const val = (valToUse || queryInput).trim();
     if (!val) return;
 
+    webVerifyAbortRef.current?.abort();
+    setWebVerifyResult(null);
+    setWebVerifyError(null);
     setIsSearching(true);
     setTimeout(() => {
       const result = evaluateTrustCheckInput(val, identifierType);
@@ -437,7 +449,36 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
     }, 400);
   };
 
+  const handleLiveWebVerify = async () => {
+    if (!activeResult?.input || isVerifyingWeb) return;
+    webVerifyAbortRef.current?.abort();
+    const controller = new AbortController();
+    webVerifyAbortRef.current = controller;
+
+    setIsVerifyingWeb(true);
+    setWebVerifyError(null);
+    try {
+      const result = await verifyIdentifierWithWebSearch(
+        {
+          identifier: activeResult.input,
+          identifierType: activeResult.type,
+        },
+        { signal: controller.signal }
+      );
+      setWebVerifyResult(result);
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+      setWebVerifyResult(null);
+      setWebVerifyError(err?.message || 'Unable to run live Google Search verification.');
+    } finally {
+      setIsVerifyingWeb(false);
+    }
+  };
+
   const loadSample = (sample: TrustCheckRecord) => {
+    webVerifyAbortRef.current?.abort();
+    setWebVerifyResult(null);
+    setWebVerifyError(null);
     setQueryInput(sample.input);
     setIdentifierType(
       sample.type === 'phone'
@@ -956,6 +997,82 @@ export const TrustCheck: React.FC<TrustCheckProps> = ({
                     <span>{finding}</span>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* 1b. Live Google Search Grounding Check (gemini-4-hydrogen) */}
+          <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/40 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="space-y-0.5">
+                <div className="text-xs font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
+                  <Globe className="w-4 h-4 text-[#007FFF]" />
+                  <span>Live Google Search Advisory Check</span>
+                </div>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Check public web scam reports, official portals, and regulatory notices for &ldquo;{activeResult.input}&rdquo; using gemini-4-hydrogen.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleLiveWebVerify}
+                disabled={isVerifyingWeb}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#007FFF] hover:bg-[#0070e0] disabled:opacity-50 text-white text-xs font-semibold transition-all cursor-pointer shrink-0"
+              >
+                {isVerifyingWeb ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Searching Web...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Verify with Google Search</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {webVerifyError && (
+              <div className="p-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span>{webVerifyError}</span>
+              </div>
+            )}
+
+            {webVerifyResult && (
+              <div className="p-3.5 rounded-xl border border-emerald-200/80 dark:border-emerald-900/50 bg-white dark:bg-zinc-900 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-zinc-500">
+                  <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                    GOOGLE SEARCH GROUNDED ({webVerifyResult.modelUsed})
+                  </span>
+                  <span>{new Date(webVerifyResult.verifiedAt).toLocaleTimeString()}</span>
+                </div>
+                <div className="text-zinc-700 dark:text-zinc-300 leading-relaxed whitespace-pre-wrap">
+                  {webVerifyResult.summary}
+                </div>
+                {webVerifyResult.groundingSources.length > 0 && (
+                  <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-1">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                      Search Sources
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {webVerifyResult.groundingSources.slice(0, 6).map((src, idx) => (
+                        <a
+                          key={`${src.uri}-${idx}`}
+                          href={src.uri}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-[11px] text-[#007FFF] hover:underline truncate"
+                        >
+                          <ExternalLink className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{src.title}</span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <p className="text-[10px] text-zinc-400">{webVerifyResult.disclaimer}</p>
               </div>
             )}
           </div>

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
+import type {
   SuspiciousTransactionAnalysisRequest,
   SuspiciousTransactionAnalysisResult,
   TransactionConsistency,
@@ -12,7 +12,7 @@ import {
   TrustCheckWarningSign,
   UpiCollectAnalysisRequest,
   UpiCollectAnalysisResult,
-} from '../types';
+} from '../types.ts';
 
 export const TRUSTCHECK_ALLOWED_IMAGE_MIMES = new Set([
   'image/png',

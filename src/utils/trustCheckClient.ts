@@ -10,6 +10,7 @@ import {
   TRUSTCHECK_MAX_SCREENSHOT_BYTES,
 } from './trustCheckAnalysis';
 import type {
+  GroundingSource,
   SuspiciousTransactionAnalysisRequest,
   SuspiciousTransactionAnalysisResult,
   TrustCheckEnhancedRiskLevel,
@@ -22,6 +23,17 @@ import type {
 export const TRUSTCHECK_CLIENT_TIMEOUT_MS = 45000;
 export const TRUSTCHECK_UPI_COLLECT_ENDPOINT = '/api/gemini/trustcheck/upi-collect';
 export const TRUSTCHECK_TRANSACTION_ENDPOINT = '/api/gemini/trustcheck/transaction';
+export const TRUSTCHECK_WEB_VERIFY_ENDPOINT = '/api/gemini/trustcheck/web-verify';
+
+export interface TrustCheckWebVerifyResult {
+  modelUsed: string;
+  summary: string;
+  groundingSources: GroundingSource[];
+  webSearchQueries: string[];
+  sensitiveDataRedacted: boolean;
+  disclaimer: string;
+  verifiedAt: string;
+}
 
 export interface DeterministicFallbackPayload {
   minRiskLevel: TrustCheckEnhancedRiskLevel;
@@ -235,4 +247,62 @@ export async function analyzeSuspiciousTransaction(
   }
 
   return result;
+}
+
+export async function verifyIdentifierWithWebSearch(
+  payload: { identifier: string; identifierType: string },
+  options?: { token?: string; signal?: AbortSignal }
+): Promise<TrustCheckWebVerifyResult> {
+  const token = await resolveBearerToken(options?.token);
+
+  const response = await fetchWithTimeout(
+    TRUSTCHECK_WEB_VERIFY_ENDPOINT,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+      signal: options?.signal,
+    },
+    TRUSTCHECK_CLIENT_TIMEOUT_MS
+  );
+
+  let data: any = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    const errMsg =
+      data && typeof data.message === 'string' && data.message.trim()
+        ? data.message.trim()
+        : `Google Search verification failed with HTTP ${response.status}.`;
+    const errCode =
+      data && typeof data.error === 'string' && data.error.trim()
+        ? data.error.trim()
+        : 'WEB_VERIFY_HTTP_ERROR';
+    throw new TrustCheckApiError(errMsg, response.status, errCode);
+  }
+
+  if (!data || data.success !== true || typeof data.summary !== 'string') {
+    throw new TrustCheckApiError(
+      'Received an incomplete Google Search verification response.',
+      502,
+      'INVALID_RESPONSE'
+    );
+  }
+
+  return {
+    modelUsed: data.modelUsed || 'gemini-4-hydrogen',
+    summary: data.summary,
+    groundingSources: Array.isArray(data.groundingSources) ? data.groundingSources : [],
+    webSearchQueries: Array.isArray(data.webSearchQueries) ? data.webSearchQueries : [],
+    sensitiveDataRedacted: Boolean(data.sensitiveDataRedacted),
+    disclaimer: data.disclaimer || '',
+    verifiedAt: data.verifiedAt || new Date().toISOString(),
+  };
 }
