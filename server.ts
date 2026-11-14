@@ -10,6 +10,7 @@ import rateLimit from 'express-rate-limit';
 import { GoogleGenAI, LiveServerMessage, Modality, ThinkingLevel, Type } from '@google/genai';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { LiveVoiceManager, getClientIp } from './src/utils/liveVoiceLimits';
+import { createLegalRagRouter } from './src/server/legalRagRouter';
 import {
   evaluateTemporalJurisdiction,
   evaluateRbiRegulatoryRemedies,
@@ -2038,6 +2039,41 @@ app.post(
 
 // Apply the general JSON parser to routes registered below
 app.use(generalBodyParser);
+
+// -------------------------------------------------------------
+// LEGAL RAG: Authenticated retrieval + privileged source ingestion
+// -------------------------------------------------------------
+const legalRagAi = getAiClient(25000);
+const legalRagSupabaseConfig = resolveSupabaseConfig();
+const legalRagServiceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const legalRagAdminClient =
+  legalRagSupabaseConfig && legalRagServiceRoleKey
+    ? createClient(legalRagSupabaseConfig.url, legalRagServiceRoleKey, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      })
+    : null;
+
+if (legalRagAi) {
+  app.use(
+    '/api/legal-rag',
+    createLegalRagRouter({
+      ai: legalRagAi,
+      adminSupabase: legalRagAdminClient || undefined,
+      verifySupabaseAuth: (req, res, next) =>
+        verifySupabaseAuth(req as AuthenticatedRequest, res, next),
+      ingestToken: process.env.LEGAL_RAG_INGEST_TOKEN || '',
+    })
+  );
+} else {
+  app.use('/api/legal-rag', (_req: Request, res: Response) =>
+    res.status(503).json({
+      success: false,
+      error: 'LEGAL_RAG_NOT_CONFIGURED',
+      message: 'Legal knowledge search is not configured. Set GEMINI_API_KEY on the server.',
+    })
+  );
+}
+
 
 // -------------------------------------------------------------
 // SAFEGUARD 7: WebSocket with Max Payload, Concurrency Caps & Limits
