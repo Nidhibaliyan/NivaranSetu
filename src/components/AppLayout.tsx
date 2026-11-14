@@ -92,6 +92,8 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
         return 'Smart Case Monitoring';
       case 'simplifier':
         return 'Legal Simplifier';
+      case 'legal_rag':
+        return 'Legal Knowledge Assistant';
       case 'custody':
         return 'Digital Custody Proof';
       case 'settings':
@@ -250,6 +252,22 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
                 TOOLS & LEGAL
               </div>
             )}
+
+            {/* 8. Verified Legal Knowledge Assistant */}
+            <button
+              onClick={() => {
+                setActiveTab('legal_rag');
+                setMobileMenuOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
+                activeTab === 'legal_rag'
+                  ? 'bg-[#007FFF]/10 text-[#007FFF]'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
+              }`}
+            >
+              <Scale className="w-4 h-4 shrink-0" />
+              {!sidebarCollapsed && <span>Legal Knowledge Assistant</span>}
+            </button>
 
             {/* 7. Legal Language Simplifier */}
             <button
