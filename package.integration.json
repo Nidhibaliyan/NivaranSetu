@@ -1,0 +1,13 @@
+{
+  "requiredExistingDependencies": {
+    "@google/genai": "^3.0.0",
+    "@supabase/supabase-js": "^2.119.0",
+    "express": "^4.21.2",
+    "react": "^19.0.1"
+  },
+  "notes": [
+    "This is an integration manifest, not a replacement package.json.",
+    "Supabase project must have pgvector extension enabled.",
+    "Embedding dimension is fixed at 3072 for gemini-embedding-001."
+  ]
+}
