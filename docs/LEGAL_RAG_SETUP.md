@@ -50,11 +50,13 @@ Example JSON file:
   "sectionRef": "Section 2",
   "language": "en",
   "effectiveDate": "2020-07-20",
+  "verifiedBy": "Admin reviewer",
+  "verificationNote": "Compared section text and amendment status against the official India Code publication.",
   "text": "Paste the exact, checked text of the relevant provision here."
 }
 ```
 
-The supplied URL must use HTTPS and an approved Indian government/regulator domain (`.gov.in`, `.nic.in`, or the explicit regulator allowlist in the router). The text must be taken from that exact official source. Keep one document/section per ingestion request and preserve section references. The server creates embeddings, stores chunks, and marks the document verified only after every chunk is stored successfully. Failed ingestion is rolled back.
+The ingestion request must include the reviewer identity and a verification note. The server stores a SHA-256 hash of the submitted source text and records the reviewer and timestamp after successful embedding. The supplied URL must use HTTPS and an approved Indian government/regulator domain (`.gov.in`, `.nic.in`, or the explicit regulator allowlist in the router). The text must be taken from that exact official source. Keep one document/section per ingestion request and preserve section references. The server creates embeddings, stores chunks, and marks the document verified only after every chunk is stored successfully. Failed ingestion is rolled back.
 
 **Important:** domain validation does not prove that the pasted text matches the linked page. A human administrator must verify the document text, title, effective date, amendment status and section before ingestion. Never ingest blogs, summaries, generated text, or unverified translations as authoritative law.
 
