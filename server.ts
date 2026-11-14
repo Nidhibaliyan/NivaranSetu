@@ -2038,9 +2038,6 @@ app.post(
 );
 
 // Apply the general JSON parser to routes registered below
-app.use(generalBodyParser);
-
-// -------------------------------------------------------------
 // LEGAL RAG: Authenticated retrieval + privileged source ingestion
 // -------------------------------------------------------------
 const legalRagAi = getAiClient(25000);
@@ -2056,6 +2053,8 @@ const legalRagAdminClient =
 if (legalRagAi) {
   app.use(
     '/api/legal-rag',
+    legalAnalysisLimiter,
+    express.json({ limit: '5mb' }),
     createLegalRagRouter({
       ai: legalRagAi,
       adminSupabase: legalRagAdminClient || undefined,
@@ -2066,7 +2065,7 @@ if (legalRagAi) {
     })
   );
 } else {
-  app.use('/api/legal-rag', (_req: Request, res: Response) =>
+  app.use('/api/legal-rag', express.json({ limit: '5mb' }), (_req: Request, res: Response) =>
     res.status(503).json({
       success: false,
       error: 'LEGAL_RAG_NOT_CONFIGURED',
@@ -2075,6 +2074,8 @@ if (legalRagAi) {
   );
 }
 
+
+app.use(generalBodyParser);
 
 // -------------------------------------------------------------
 // SAFEGUARD 7: WebSocket with Max Payload, Concurrency Caps & Limits
