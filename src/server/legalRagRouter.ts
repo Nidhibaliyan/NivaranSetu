@@ -65,7 +65,7 @@ function splitIntoChunks(text: string, maxChars = 1400, overlap = 180): string[]
   return chunks;
 }
 
-async function embedMany(ai: GoogleGenAI, model: string, texts: string[], taskType: 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY'): Promise<number[][]> {
+async function embedMany(ai: GoogleGenAI, model: string, texts: string[], taskType: 'RETRIEVAL_DOCUMENT' | 'QUESTION_ANSWERING'): Promise<number[][]> {
   if (texts.length === 0) return [];
   const response = await ai.models.embedContent({ model, contents: texts, config: { taskType } });
   const vectors = (response.embeddings || []).map((item) => item.values || []);
@@ -76,7 +76,7 @@ async function embedMany(ai: GoogleGenAI, model: string, texts: string[], taskTy
 }
 
 async function embed(ai: GoogleGenAI, model: string, text: string): Promise<number[]> {
-  const vectors = await embedMany(ai, model, [text], 'RETRIEVAL_QUERY');
+  const vectors = await embedMany(ai, model, [text], 'QUESTION_ANSWERING');
   return vectors[0];
 }
 
@@ -149,7 +149,10 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
       const embeddingBatchSize = 32;
       for (let start = 0; start < chunks.length; start += embeddingBatchSize) {
         const batch = chunks.slice(start, start + embeddingBatchSize);
-        const vectors = await embedMany(deps.ai, embeddingModel, batch, 'RETRIEVAL_DOCUMENT');
+        const embeddingInputs = batch.map((chunk) =>
+          `Title: ${title}\\nAct: ${typeof body.actTitle === 'string' ? body.actTitle : ''}\\nSection: ${typeof body.sectionRef === 'string' ? body.sectionRef : ''}\\nPassage: ${chunk}`
+        );
+        const vectors = await embedMany(deps.ai, embeddingModel, embeddingInputs, 'RETRIEVAL_DOCUMENT');
         batch.forEach((chunk, offset) => {
           rows.push({
             document_id: doc.id,
