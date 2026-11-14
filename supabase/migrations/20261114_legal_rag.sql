@@ -1,5 +1,6 @@
 -- NivaranSetu Legal RAG: Supabase pgvector schema.
 -- Apply once through Supabase SQL Editor or migration workflow.
+create schema if not exists extensions;
 create extension if not exists vector with schema extensions;
 
 create table if not exists public.legal_documents (
