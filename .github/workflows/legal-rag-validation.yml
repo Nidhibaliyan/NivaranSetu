@@ -1,6 +1,7 @@
 name: Legal RAG integration checks
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - feature/legal-rag-integration
