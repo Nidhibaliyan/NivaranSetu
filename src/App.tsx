@@ -23,6 +23,7 @@ import { ResolutionNavigator } from './components/ResolutionNavigator';
 import { CaseDossier } from './components/CaseDossier';
 import { SmartCaseMonitoring } from './components/SmartCaseMonitoring';
 import { LegalSimplifier } from './components/LegalSimplifier';
+import { LegalRagPanel } from './components/LegalRagPanel';
 import { SettingsView } from './components/SettingsView';
 import { BridgeOpeningAnimation } from './components/BridgeOpeningAnimation';
 import { GrievanceCase, TrustCheckRecord } from './types';
@@ -778,6 +779,9 @@ export default function App() {
                 }}
               />
             )}
+
+            {/* Verified Legal Knowledge Assistant */}
+            {activeTab === 'legal_rag' && <LegalRagPanel />}
 
             {/* Settings View */}
             {activeTab === 'settings' && (
