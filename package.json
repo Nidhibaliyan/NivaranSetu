@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "start": "node server.ts",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "ingest:legal-rag": "node scripts/ingest-legal-rag.mjs"
   },
   "dependencies": {
     "@google/genai": "^3.0.0",
