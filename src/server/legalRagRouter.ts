@@ -7,7 +7,7 @@ import type { LanguageCode } from '../types';
 type AuthRequest = Request & { userSupabase?: SupabaseClient };
 type LegalRagDependencies = {
   ai: GoogleGenAI;
-  adminSupabase: SupabaseClient;
+  adminSupabase?: SupabaseClient;
   verifySupabaseAuth: RequestHandler;
   ingestToken: string;
   embeddingModel?: string;
@@ -18,6 +18,21 @@ const LANGUAGES: Record<LanguageCode, string> = {
   en: 'English', hi: 'Hindi', bn: 'Bengali', mr: 'Marathi', ta: 'Tamil',
   te: 'Telugu', kn: 'Kannada', ml: 'Malayalam', gu: 'Gujarati',
   pa: 'Punjabi', or: 'Odia', ur: 'Urdu',
+};
+
+const NO_EVIDENCE: Record<LanguageCode, string> = {
+  en: 'I could not find a sufficiently relevant passage in the verified legal-source collection. Try a more specific question or consult the official source.',
+  hi: 'सत्यापित कानूनी स्रोतों में इस प्रश्न के लिए पर्याप्त प्रासंगिक जानकारी नहीं मिली। कृपया प्रश्न को अधिक विशिष्ट बनाएं या आधिकारिक स्रोत देखें।',
+  bn: 'যাচাইকৃত আইনি উৎসে এই প্রশ্নের জন্য যথেষ্ট প্রাসঙ্গিক তথ্য পাওয়া যায়নি। অনুগ্রহ করে আরও নির্দিষ্ট প্রশ্ন করুন বা সরকারি উৎস দেখুন।',
+  mr: 'सत्यापित कायदेशीर स्रोतांमध्ये या प्रश्नासाठी पुरेशी संबंधित माहिती आढळली नाही. कृपया अधिक विशिष्ट प्रश्न विचारा किंवा अधिकृत स्रोत पाहा.',
+  ta: 'சரிபார்க்கப்பட்ட சட்ட ஆதாரங்களில் இந்தக் கேள்விக்குப் போதுமான தொடர்புடைய தகவல் கிடைக்கவில்லை. மேலும் குறிப்பான கேள்வியைக் கேட்கவும் அல்லது அதிகாரப்பூர்வ ஆதாரத்தைப் பார்க்கவும்.',
+  te: 'ధృవీకరించిన చట్టపరమైన మూలాల్లో ఈ ప్రశ్నకు సరిపడిన సంబంధిత సమాచారం కనుగొనబడలేదు. మరింత నిర్దిష్టంగా అడగండి లేదా అధికారిక మూలాన్ని చూడండి.',
+  kn: 'ಪರಿಶೀಲಿಸಿದ ಕಾನೂನು ಮೂಲಗಳಲ್ಲಿ ಈ ಪ್ರಶ್ನೆಗೆ ಸಾಕಷ್ಟು ಸಂಬಂಧಿತ ಮಾಹಿತಿ ಕಂಡುಬಂದಿಲ್ಲ. ದಯವಿಟ್ಟು ಹೆಚ್ಚು ನಿರ್ದಿಷ್ಟವಾಗಿ ಕೇಳಿ ಅಥವಾ ಅಧಿಕೃತ ಮೂಲವನ್ನು ನೋಡಿ.',
+  ml: 'പരിശോധിച്ച നിയമസ്രോതസ്സുകളിൽ ഈ ചോദ്യത്തിന് മതിയായ പ്രസക്തമായ വിവരം കണ്ടെത്താനായില്ല. കൂടുതൽ വ്യക്തമായി ചോദിക്കുകയോ ഔദ്യോഗിക ഉറവിടം പരിശോധിക്കുകയോ ചെയ്യുക.',
+  gu: 'ચકાસેલા કાનૂની સ્ત્રોતોમાં આ પ્રશ્ન માટે પૂરતી સંબંધિત માહિતી મળી નથી. કૃપા કરીને વધુ ચોક્કસ પ્રશ્ન પૂછો અથવા સત્તાવાર સ્ત્રોત જુઓ.',
+  pa: 'ਪ੍ਰਮਾਣਿਤ ਕਾਨੂੰਨੀ ਸਰੋਤਾਂ ਵਿੱਚ ਇਸ ਸਵਾਲ ਲਈ ਕਾਫ਼ੀ ਸੰਬੰਧਿਤ ਜਾਣਕਾਰੀ ਨਹੀਂ ਮਿਲੀ। ਕਿਰਪਾ ਕਰਕੇ ਹੋਰ ਖਾਸ ਸਵਾਲ ਪੁੱਛੋ ਜਾਂ ਅਧਿਕਾਰਤ ਸਰੋਤ ਵੇਖੋ।',
+  or: 'ଯାଞ୍ଚ ହୋଇଥିବା ଆଇନଗତ ଉତ୍ସରେ ଏହି ପ୍ରଶ୍ନ ପାଇଁ ପର୍ଯ୍ୟାପ୍ତ ସମ୍ପର୍କିତ ସୂଚନା ମିଳିଲା ନାହିଁ। ଦୟାକରି ଅଧିକ ନିର୍ଦ୍ଦିଷ୍ଟ ପ୍ରଶ୍ନ ପଚାରନ୍ତୁ କିମ୍ବା ସରକାରୀ ଉତ୍ସ ଦେଖନ୍ତୁ।',
+  ur: 'تصدیق شدہ قانونی ذرائع میں اس سوال کے لیے کافی متعلقہ معلومات نہیں ملیں۔ براہِ کرم مزید مخصوص سوال پوچھیں یا سرکاری ماخذ دیکھیں۔',
 };
 
 function safeEqual(a: string, b: string): boolean {
@@ -67,6 +82,9 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
   // Ingestion is server-to-server only. It is deliberately not exposed through the citizen UI.
   router.post('/ingest', async (req: Request, res: Response) => {
     const supplied = String(req.header('x-legal-rag-token') || '');
+    if (!deps.adminSupabase) {
+      return res.status(503).json({ success: false, error: 'INGESTION_NOT_CONFIGURED', message: 'Server-side Supabase service-role configuration is missing.' });
+    }
     if (!deps.ingestToken || !supplied || !safeEqual(supplied, deps.ingestToken)) {
       return res.status(401).json({ success: false, error: 'INGEST_UNAUTHORIZED' });
     }
@@ -82,7 +100,18 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
     }
     try {
       const url = new URL(sourceUrl);
-      if (url.protocol !== 'https:') throw new Error('Only HTTPS source URLs are accepted.');
+      const host = url.hostname.toLowerCase();
+      const trustedExactHosts = new Set([
+        'rbi.org.in', 'www.rbi.org.in', 'sebi.gov.in', 'www.sebi.gov.in',
+        'irdai.gov.in', 'www.irdai.gov.in', 'trai.gov.in', 'www.trai.gov.in',
+        'ncdrc.nic.in', 'consumerhelpline.gov.in', 'www.consumerhelpline.gov.in',
+        'indiacode.nic.in', 'www.indiacode.nic.in', 'egazette.nic.in',
+        'legislative.gov.in', 'www.legislative.gov.in',
+      ]);
+      const trustedSuffix = host.endsWith('.gov.in') || host.endsWith('.nic.in');
+      if (url.protocol !== 'https:' || (!trustedExactHosts.has(host) && !trustedSuffix)) {
+        throw new Error('Only HTTPS sources on approved Indian government or regulator domains are accepted.');
+      }
     } catch {
       return res.status(400).json({ success: false, error: 'INVALID_SOURCE_URL', message: 'Use a valid HTTPS official-source URL.' });
     }
@@ -95,7 +124,7 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
         section_ref: typeof body.sectionRef === 'string' ? body.sectionRef : null,
         language,
         effective_date: typeof body.effectiveDate === 'string' ? body.effectiveDate : null,
-        source_verified: body.sourceVerified === true,
+        source_verified: false,
         is_active: true,
       })
       .select('id')
@@ -118,14 +147,20 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
           embedding: JSON.stringify(vector),
         });
       }
+      if (rows.length === 0) throw new Error('No text chunks were produced from the supplied document.');
       const { error: chunkError } = await deps.adminSupabase
         .from('legal_document_chunks')
         .insert(rows);
       if (chunkError) throw chunkError;
-      return res.status(201).json({ success: true, documentId: doc.id, chunksCreated: rows.length, verified: body.sourceVerified === true });
+      const { error: verifyError } = await deps.adminSupabase
+        .from('legal_documents')
+        .update({ source_verified: true })
+        .eq('id', doc.id);
+      if (verifyError) throw verifyError;
+      return res.status(201).json({ success: true, documentId: doc.id, chunksCreated: rows.length, verified: true });
     } catch (error: any) {
       // Avoid leaving a visible, partially ingested document.
-      await deps.adminSupabase.from('legal_documents').update({ is_active: false }).eq('id', doc.id);
+      await deps.adminSupabase.from('legal_documents').delete().eq('id', doc.id);
       return res.status(500).json({ success: false, error: 'INGESTION_FAILED', message: error?.message || 'Unable to create document embeddings.' });
     }
   });
@@ -164,9 +199,7 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
       if (!sources.length) {
         return res.json({
           success: true,
-          answer: LANGUAGES[language] === 'English'
-            ? 'I could not find a sufficiently relevant passage in the verified legal-source collection. Try a more specific question or consult the official source.'
-            : `I could not find a sufficiently relevant passage in the verified legal-source collection. Please consult the official source. Responding language requested: ${LANGUAGES[language]}.`,
+          answer: NO_EVIDENCE[language],
           sources: [],
           insufficientEvidence: true,
           language,
