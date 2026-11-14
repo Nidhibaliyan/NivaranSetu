@@ -145,7 +145,7 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
 
     try {
       const chunks = splitIntoChunks(text);
-      const rows = [];
+      const rows: Array<{ document_id: string; chunk_index: number; content: string; language: LanguageCode; embedding: string }> = [];
       const embeddingBatchSize = 32;
       for (let start = 0; start < chunks.length; start += embeddingBatchSize) {
         const batch = chunks.slice(start, start + embeddingBatchSize);
