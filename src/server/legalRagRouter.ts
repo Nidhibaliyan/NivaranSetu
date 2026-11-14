@@ -150,7 +150,7 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
       for (let start = 0; start < chunks.length; start += embeddingBatchSize) {
         const batch = chunks.slice(start, start + embeddingBatchSize);
         const embeddingInputs = batch.map((chunk) =>
-          `Title: ${title}\\nAct: ${typeof body.actTitle === 'string' ? body.actTitle : ''}\\nSection: ${typeof body.sectionRef === 'string' ? body.sectionRef : ''}\\nPassage: ${chunk}`
+          `Title: ${title}\nAct: ${typeof body.actTitle === 'string' ? body.actTitle : ''}\nSection: ${typeof body.sectionRef === 'string' ? body.sectionRef : ''}\nPassage: ${chunk}`
         );
         const vectors = await embedMany(deps.ai, embeddingModel, embeddingInputs, 'RETRIEVAL_DOCUMENT');
         batch.forEach((chunk, offset) => {
