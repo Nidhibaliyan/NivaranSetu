@@ -62,6 +62,16 @@ The ingestion request must include the reviewer identity and a verification note
 
 The ingestion endpoint accepts up to 5 MB per request and 250,000 characters of text per document. Embeddings are generated in batches of 32 chunks. Split larger acts into separate section-level documents.
 
+### Bulk ingestion
+
+Place one JSON file per verified act/section inside `legal-rag/corpus/`, then run:
+
+```bash
+APP_URL="https://your-app.example" LEGAL_RAG_INGEST_TOKEN="your-server-token" npm run ingest:legal-rag
+```
+
+The script posts each JSON file to the protected ingestion endpoint and reports each result. Keep this corpus directory out of public static assets and do not commit private ingestion tokens. Do not bulk-ingest documents until their official text and amendment status have been checked.
+
 ## 4. Test the citizen query flow
 
 1. Sign in to NivaranSetu.
