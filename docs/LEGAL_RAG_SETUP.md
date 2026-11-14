@@ -60,7 +60,7 @@ The ingestion request must include the reviewer identity and a verification note
 
 **Important:** domain validation does not prove that the pasted text matches the linked page. A human administrator must verify the document text, title, effective date, amendment status and section before ingestion. Never ingest blogs, summaries, generated text, or unverified translations as authoritative law.
 
-The ingestion endpoint accepts up to 5 MB per request. Split larger acts into separate section-level documents.
+The ingestion endpoint accepts up to 5 MB per request and 250,000 characters of text per document. Embeddings are generated in batches of 32 chunks. Split larger acts into separate section-level documents.
 
 ## 4. Test the citizen query flow
 
