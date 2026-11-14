@@ -65,9 +65,9 @@ function splitIntoChunks(text: string, maxChars = 1400, overlap = 180): string[]
   return chunks;
 }
 
-async function embedMany(ai: GoogleGenAI, model: string, texts: string[]): Promise<number[][]> {
+async function embedMany(ai: GoogleGenAI, model: string, texts: string[], taskType: 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY'): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const response = await ai.models.embedContent({ model, contents: texts });
+  const response = await ai.models.embedContent({ model, contents: texts, config: { taskType } });
   const vectors = (response.embeddings || []).map((item) => item.values || []);
   if (vectors.length !== texts.length || vectors.some((vector) => vector.length !== 3072)) {
     throw new Error('Embedding model returned an unexpected batch size or vector dimension; expected one 3072-dimensional vector per chunk.');
@@ -76,7 +76,7 @@ async function embedMany(ai: GoogleGenAI, model: string, texts: string[]): Promi
 }
 
 async function embed(ai: GoogleGenAI, model: string, text: string): Promise<number[]> {
-  const vectors = await embedMany(ai, model, [text]);
+  const vectors = await embedMany(ai, model, [text], 'RETRIEVAL_QUERY');
   return vectors[0];
 }
 
@@ -149,7 +149,7 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
       const embeddingBatchSize = 32;
       for (let start = 0; start < chunks.length; start += embeddingBatchSize) {
         const batch = chunks.slice(start, start + embeddingBatchSize);
-        const vectors = await embedMany(deps.ai, embeddingModel, batch);
+        const vectors = await embedMany(deps.ai, embeddingModel, batch, 'RETRIEVAL_DOCUMENT');
         batch.forEach((chunk, offset) => {
           rows.push({
             document_id: doc.id,
