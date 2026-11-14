@@ -2059,8 +2059,9 @@ if (legalRagAi) {
     createLegalRagRouter({
       ai: legalRagAi,
       adminSupabase: legalRagAdminClient || undefined,
-      verifySupabaseAuth: (req, res, next) =>
-        verifySupabaseAuth(req as AuthenticatedRequest, res, next),
+      verifySupabaseAuth: (req, res, next) => {
+        void verifySupabaseAuth(req as AuthenticatedRequest, res, next);
+      },
       ingestToken: process.env.LEGAL_RAG_INGEST_TOKEN || '',
     })
   );
