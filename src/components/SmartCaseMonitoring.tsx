@@ -56,9 +56,34 @@ import {
 import { GuidedNavigationHeader } from './GuidedNavigationHeader';
 import {
   CHAT_CLIENT_TIMEOUT_MS,
-  fetchWithTimeout,
+  authenticatedFetchWithTimeout,
+  extractAiErrorFromResponse,
   formatAiErrorMessage,
 } from '../utils/aiClientUtils';
+
+export function validateResponseAttachmentDownload(
+  resp: Pick<CaseResponseRecord, 'storageRef'>
+): string | null {
+  if (!resp.storageRef || !resp.storageRef.trim()) {
+    return 'This response record was created locally and does not have a private cloud storage reference.';
+  }
+  return null;
+}
+
+export function validateResponseSubmissionInput(params: {
+  responseText: string;
+  hasFile: boolean;
+  hasUploadedAttachment: boolean;
+  caseId?: string | null;
+}): string | null {
+  if (!params.responseText.trim() && !params.hasFile && !params.hasUploadedAttachment) {
+    return 'Please provide response text or select a response document file.';
+  }
+  if (!params.caseId || !params.caseId.trim()) {
+    return 'Cannot attach response: no active parent case ID found.';
+  }
+  return null;
+}
 
 interface SmartCaseMonitoringProps {
   currentCase: GrievanceCase;
@@ -75,7 +100,7 @@ export const SmartCaseMonitoring: React.FC<SmartCaseMonitoringProps> = ({
   onOpenDossier,
   onOpenNavigator,
 }) => {
-  const { mode } = useLanguage();
+  const { mode, language } = useLanguage();
 
   // Ensure monitoring object is present
   const monitoring = currentCase.monitoring || {
@@ -101,6 +126,10 @@ export const SmartCaseMonitoring: React.FC<SmartCaseMonitoringProps> = ({
   const [departmentInput, setDepartmentInput] = useState(monitoring.department || currentCase.recommendedAuthority.name);
   const [statusInput, setStatusInput] = useState<CitizenReportedStatus>(monitoring.citizenReportedStatus || 'submitted');
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [monitoringNotice, setMonitoringNotice] = useState<{
+    type: 'error' | 'info';
+    message: string;
+  } | null>(null);
 
   // State for adding a reminder
   const [showAddReminderModal, setShowAddReminderModal] = useState(false);
@@ -269,13 +298,18 @@ export const SmartCaseMonitoring: React.FC<SmartCaseMonitoringProps> = ({
 
   // Handle download of official response attachment from private Supabase Storage
   const handleDownloadResponseAttachment = async (resp: CaseResponseRecord) => {
-    if (!resp.storageRef) {
-      alert('This response record was created locally and does not have a private cloud storage reference.');
+    const downloadValidationErr = validateResponseAttachmentDownload(resp);
+    if (downloadValidationErr) {
+      setMonitoringNotice({
+        type: 'info',
+        message: downloadValidationErr,
+      });
       return;
     }
+    setMonitoringNotice(null);
     setDownloadingResponseId(resp.id);
     try {
-      const blob = await downloadEvidenceBlob(resp.storageRef);
+      const blob = await downloadEvidenceBlob(resp.storageRef!);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -286,7 +320,10 @@ export const SmartCaseMonitoring: React.FC<SmartCaseMonitoringProps> = ({
       URL.revokeObjectURL(url);
     } catch (err: any) {
       console.error('Failed to download response document:', err);
-      alert(`Could not download response document: ${err?.message || 'Storage download error'}`);
+      setMonitoringNotice({
+        type: 'error',
+        message: `Could not download response document: ${err?.message || 'Storage download error'}`,
+      });
     } finally {
       setDownloadingResponseId(null);
     }
@@ -294,13 +331,14 @@ export const SmartCaseMonitoring: React.FC<SmartCaseMonitoringProps> = ({
 
   // Handle response document/text upload and AI analysis
   const handleRecordResponse = async () => {
-    if (!responseText.trim() && !responseFile && !uploadedAttachment) {
-      alert('Please provide response text or select a response document file.');
-      return;
-    }
-
-    if (!currentCase.id || !currentCase.id.trim()) {
-      alert('Cannot attach response: no active parent case ID found.');
+    const validationErr = validateResponseSubmissionInput({
+      responseText,
+      hasFile: Boolean(responseFile),
+      hasUploadedAttachment: Boolean(uploadedAttachment),
+      caseId: currentCase.id,
+    });
+    if (validationErr) {
+      setResponseSaveError(validationErr);
       return;
     }
 
@@ -357,7 +395,7 @@ Return your analysis in this exact format:
 CLASSIFICATION: [resolved | partially_resolved | unresolved | requires_human_review]
 RATIONALE: [2-3 sentences explaining the legal and factual basis for this classification]`;
 
-      const aiRes = await fetchWithTimeout(
+      const aiRes = await authenticatedFetchWithTimeout(
         '/api/gemini/chat',
         {
           method: 'POST',
@@ -366,6 +404,7 @@ RATIONALE: [2-3 sentences explaining the legal and factual basis for this classi
             messages: [{ role: 'user', text: prompt }],
             taskType: 'complex',
             requestedModel: 'gemini-4-hydrogen',
+            language,
           }),
         },
         CHAT_CLIENT_TIMEOUT_MS
@@ -382,8 +421,8 @@ RATIONALE: [2-3 sentences explaining the legal and factual basis for this classi
         const rationaleMatch = aiOutput.match(/RATIONALE:\s*([\s\S]+)/i);
         rationale = rationaleMatch ? rationaleMatch[1].trim() : aiOutput.trim();
       } else {
-        const errJson = await aiRes.json().catch(() => ({}));
-        throw new Error(errJson.error || `AI service returned HTTP ${aiRes.status}`);
+        const errMsg = await extractAiErrorFromResponse(aiRes, `AI service returned HTTP ${aiRes.status}`);
+        throw new Error(errMsg);
       }
     } catch (aiErr: any) {
       isRuleBasedFallback = true;
@@ -643,6 +682,30 @@ RATIONALE: [2-3 sentences explaining the legal and factual basis for this classi
         <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400 text-xs flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0" />
           <span>{saveSuccessMsg}</span>
+        </div>
+      )}
+
+      {monitoringNotice && (
+        <div
+          className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-3 ${
+            monitoringNotice.type === 'error'
+              ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300'
+              : 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300'
+          }`}
+          role="alert"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{monitoringNotice.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMonitoringNotice(null)}
+            className="px-2 py-0.5 rounded text-[11px] font-semibold hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer shrink-0"
+            title="Dismiss notice"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 

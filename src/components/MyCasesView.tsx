@@ -26,7 +26,7 @@ export const MyCasesView: React.FC<MyCasesViewProps> = ({
   onSelectCase,
   onCreateNewCase,
 }) => {
-  const { mode } = useLanguage();
+  const { mode, t } = useLanguage();
   const [stageFilter, setStageFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -48,8 +48,8 @@ export const MyCasesView: React.FC<MyCasesViewProps> = ({
           <div className="text-xs font-semibold text-[#007FFF] uppercase tracking-wider">
             Citizen Case Management
           </div>
-          <h2 className="text-xl sm:text-2xl font-bold text-zinc-950 dark:text-white">
-            My Grievance Cases
+          <h2 data-testid="my-cases-heading" className="text-xl sm:text-2xl font-bold text-zinc-950 dark:text-white">
+            {t('nav_my_cases')}
           </h2>
           <p className="text-xs text-zinc-500 mt-1">
             Track preparation progress, readiness audits, and authority resolution stages.
@@ -61,7 +61,7 @@ export const MyCasesView: React.FC<MyCasesViewProps> = ({
           className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#007FFF] hover:bg-[#0070e0] rounded-xl transition-all shadow-sm cursor-pointer whitespace-nowrap self-start sm:self-auto"
         >
           <Plus className="w-3.5 h-3.5" />
-          <span>Create New Case</span>
+          <span>{t('nav_new_case')}</span>
         </button>
       </div>
 
@@ -71,7 +71,7 @@ export const MyCasesView: React.FC<MyCasesViewProps> = ({
         {/* Stage Filter Tabs */}
         <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs">
           {[
-            { id: 'all', label: `All Cases (${cases.length})` },
+            { id: 'all', label: `${t('dashboard_all_cases')} (${cases.length})` },
             { id: 'drafting', label: 'Drafting' },
             { id: 'evidence_gathering', label: 'Evidence Gathering' },
             { id: 'ready_to_file', label: 'Ready to File' },
@@ -97,7 +97,7 @@ export const MyCasesView: React.FC<MyCasesViewProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by case title, entity, or ID..."
+            placeholder={t('search_placeholder')}
             className="text-xs pl-8 pr-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF] w-full sm:w-64"
           />
         </div>

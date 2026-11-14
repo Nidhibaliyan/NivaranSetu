@@ -13,6 +13,8 @@ import {
   Sparkles,
   Clock
 } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext';
+import { getGuidedNavigationCopy } from '../i18n/guidedNavigationTranslations';
 
 interface GuidedNavigationHeaderProps {
   stepNumber?: number;
@@ -42,15 +44,21 @@ export const GuidedNavigationHeader: React.FC<GuidedNavigationHeaderProps> = ({
   progressPercent,
   lastAutosaved,
   onBack,
-  backLabel = 'Back',
+  backLabel,
   onContinue,
-  continueLabel = 'Continue',
+  continueLabel,
   continueDisabled = false,
   onSaveDraft,
   onExit,
-  exitLabel = 'Save & Exit',
+  exitLabel,
   className = '',
 }) => {
+  const { language, t } = useLanguage();
+  const copy = getGuidedNavigationCopy(language);
+  const resolvedBackLabel = backLabel ?? t('back');
+  const resolvedContinueLabel = continueLabel ?? copy.continueLabel;
+  const resolvedExitLabel = exitLabel ?? copy.exitLabel;
+
   const percent =
     progressPercent !== undefined
       ? progressPercent
@@ -70,7 +78,7 @@ export const GuidedNavigationHeader: React.FC<GuidedNavigationHeaderProps> = ({
           <div className="flex items-center gap-2 flex-wrap text-xs">
             {stepNumber && (
               <span className="px-2 py-0.5 rounded-full bg-[#007FFF]/10 text-[#007FFF] font-mono font-bold text-[11px]">
-                Step {stepNumber} of {totalSteps}
+                {copy.formatStepOf(stepNumber, totalSteps)}
               </span>
             )}
 
@@ -83,7 +91,7 @@ export const GuidedNavigationHeader: React.FC<GuidedNavigationHeaderProps> = ({
             {lastAutosaved && (
               <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Autosaved {lastAutosaved}</span>
+                <span>{copy.autosaved} {lastAutosaved}</span>
               </span>
             )}
           </div>
@@ -106,7 +114,7 @@ export const GuidedNavigationHeader: React.FC<GuidedNavigationHeaderProps> = ({
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-xs font-semibold transition-colors cursor-pointer"
             >
               <ChevronLeft className="w-3.5 h-3.5" />
-              <span>{backLabel}</span>
+              <span>{resolvedBackLabel}</span>
             </button>
           )}
 
@@ -115,10 +123,10 @@ export const GuidedNavigationHeader: React.FC<GuidedNavigationHeaderProps> = ({
               type="button"
               onClick={onSaveDraft}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-xs font-semibold transition-colors cursor-pointer"
-              title="Save changes to your local case database"
+              title={copy.saveTitle}
             >
               <Save className="w-3.5 h-3.5 text-[#007FFF]" />
-              <span>Save</span>
+              <span>{copy.save}</span>
             </button>
           )}
 
@@ -129,7 +137,7 @@ export const GuidedNavigationHeader: React.FC<GuidedNavigationHeaderProps> = ({
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-zinc-500 hover:text-zinc-900 dark:hover:text-white text-xs font-medium transition-colors cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>{exitLabel}</span>
+              <span>{resolvedExitLabel}</span>
             </button>
           )}
 
@@ -140,7 +148,7 @@ export const GuidedNavigationHeader: React.FC<GuidedNavigationHeaderProps> = ({
               disabled={continueDisabled}
               className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-[#007FFF] hover:bg-[#0070e0] disabled:bg-zinc-300 dark:disabled:bg-zinc-800 text-white text-xs font-semibold transition-all shadow-xs cursor-pointer disabled:cursor-not-allowed"
             >
-              <span>{continueLabel}</span>
+              <span>{resolvedContinueLabel}</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           )}

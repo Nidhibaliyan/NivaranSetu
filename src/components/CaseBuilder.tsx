@@ -11,6 +11,7 @@ import {
 import { requestLegalAnalysis } from '../utils/legalAnalysisClient';
 import { getValidAccessToken } from '../utils/authSession';
 import { useLanguage } from '../context/LanguageContext';
+import { LANGUAGE_METADATA, getLanguageMeta, getSpeechLocale } from '../i18n/appTranslations';
 import {
   calculateSha256,
   createCustodyEvent,
@@ -48,8 +49,9 @@ import {
 import {
   CHAT_CLIENT_TIMEOUT_MS,
   TRANSCRIBE_CLIENT_TIMEOUT_MS,
+  authenticatedFetchWithTimeout,
   boundConversationHistory,
-  fetchWithTimeout,
+  extractAiErrorFromResponse,
   formatAiErrorMessage,
 } from '../utils/aiClientUtils';
 import {
@@ -1300,7 +1302,7 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
   onCancel,
   onStartNewCase,
 }) => {
-  const { t, mode } = useLanguage();
+  const { t, mode, language } = useLanguage();
 
   // Wizard Step:
   // 1 = Incident & Details
@@ -1376,14 +1378,21 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
     initialCase?.trustCheckRecord || initialTrustRecord || undefined
   );
 
-  // Voice recognition state
+  // Voice recognition state (supports all 12 Indian BCP-47 speech locales)
   const [isRecording, setIsRecording] = useState(false);
-  const [voiceLanguage, setVoiceLanguage] = useState<'en-IN' | 'hi-IN'>('en-IN');
+  const [voiceLanguage, setVoiceLanguage] = useState<string>(() => getSpeechLocale(language));
+  const hasManualVoiceLanguageRef = useRef<boolean>(false);
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const [isBrowserSpeechActive, setIsBrowserSpeechActive] = useState(false);
   const recognitionRef = useRef<any>(null);
   const micRecorderRef = useRef<MicrophoneRecorder | null>(null);
   const audioFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!hasManualVoiceLanguageRef.current) {
+      setVoiceLanguage(getSpeechLocale(language));
+    }
+  }, [language]);
 
   // AI Grievance Detection state
   const [isAnalyzingFacts, setIsAnalyzingFacts] = useState(false);
@@ -1772,12 +1781,15 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
     }
   };
 
-  // Web Speech API
+  // Web Speech API (all 12 supported Indian BCP-47 locales)
   useEffect(() => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
+      const matchedVoiceMeta =
+        Object.values(LANGUAGE_METADATA).find((m) => m.speechLocale === voiceLanguage) ||
+        getLanguageMeta(language);
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = voiceLanguage;
@@ -1785,7 +1797,7 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
       recognition.onstart = () => {
         setIsBrowserSpeechActive(true);
         setVoiceNotice(
-          `Listening (${voiceLanguage === 'hi-IN' ? 'Hindi' : 'English'}). Speak your grievance clearly...`
+          `Listening (${matchedVoiceMeta.nativeLabel} · ${voiceLanguage}). Speak your grievance clearly...`
         );
       };
 
@@ -1804,17 +1816,31 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
       };
 
       recognition.onerror = (event: any) => {
-        console.warn('Browser speech recognition notice:', event.error);
+        const errCode = event?.error || 'unknown';
+        console.warn('Browser speech recognition notice:', errCode);
         setIsBrowserSpeechActive(false);
+        setIsRecording(false);
+        if (errCode === 'language-not-supported') {
+          setVoiceNotice(
+            `Browser speech recognition does not support ${matchedVoiceMeta.label} (${voiceLanguage}) on this device. Upload an audio file below or use server transcription.`
+          );
+        } else if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+          setVoiceNotice('Microphone permission blocked. Allow mic access or upload an audio file below.');
+        } else if (errCode !== 'aborted') {
+          setVoiceNotice(`Speech recognition stopped (${errCode}). You can retry or upload an audio file.`);
+        }
       };
 
       recognition.onend = () => {
         setIsBrowserSpeechActive(false);
+        setIsRecording(false);
       };
 
       recognitionRef.current = recognition;
+    } else {
+      recognitionRef.current = null;
     }
-  }, [voiceLanguage, description, title, category, involvedEntity, disputedAmount]);
+  }, [voiceLanguage, language, description, title, category, involvedEntity, disputedAmount]);
 
   const toggleBrowserRecording = () => {
     if (isBrowserSpeechActive) {
@@ -1851,7 +1877,7 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
 
       try {
         const { base64, mimeType } = await micRecorderRef.current.stop();
-        const res = await fetchWithTimeout(
+        const res = await authenticatedFetchWithTimeout(
           '/api/gemini/transcribe',
           {
             method: 'POST',
@@ -1859,6 +1885,9 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
             body: JSON.stringify({
               audioBase64: base64,
               mimeType,
+              language:
+                Object.values(LANGUAGE_METADATA).find((m) => m.speechLocale === voiceLanguage)?.code ||
+                language,
               prompt:
                 'Transcribe this citizen grievance recording accurately. Extract dates, amounts, and involved entities.',
             }),
@@ -1866,14 +1895,19 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
           TRANSCRIBE_CLIENT_TIMEOUT_MS
         );
 
+        if (!res.ok) {
+          const errMsg = await extractAiErrorFromResponse(res, 'Failed to transcribe');
+          throw new Error(errMsg);
+        }
+
         const data = await res.json();
-        if (res.ok && data.text) {
+        if (data.text) {
           const combined = description ? `${description}\n\n${data.text}` : data.text;
           applyExtractedFacts(data.text, combined);
           setVoiceNotice('Audio transcribed & key details extracted! Review and edit below.');
           setTimeout(() => setVoiceNotice(null), 3500);
         } else {
-          throw new Error(data.error || 'Failed to transcribe');
+          throw new Error(data.message || data.error || 'Failed to transcribe');
         }
       } catch (err: any) {
         const errMsg = formatAiErrorMessage(err, 'Could not transcribe audio');
@@ -1898,7 +1932,7 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
     setVoiceNotice(`Transcribing "${file.name}"...`);
     try {
       const { base64, mimeType } = await audioFileToBase64(file);
-      const res = await fetchWithTimeout(
+      const res = await authenticatedFetchWithTimeout(
         '/api/gemini/transcribe',
         {
           method: 'POST',
@@ -1906,6 +1940,9 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
           body: JSON.stringify({
             audioBase64: base64,
             mimeType,
+            language:
+              Object.values(LANGUAGE_METADATA).find((m) => m.speechLocale === voiceLanguage)?.code ||
+              language,
             prompt:
               'Transcribe this citizen grievance recording accurately. Extract dates, amounts, and involved entities.',
           }),
@@ -1913,15 +1950,20 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
         TRANSCRIBE_CLIENT_TIMEOUT_MS
       );
 
+      if (!res.ok) {
+        const errMsg = await extractAiErrorFromResponse(res, 'Failed to transcribe file');
+        throw new Error(errMsg);
+      }
+
       const data = await res.json();
-      if (res.ok && data.text) {
+      if (data.text) {
         markUserEdit();
         const combined = description ? `${description}\n\n${data.text}` : data.text;
         applyExtractedFacts(data.text, combined);
         setVoiceNotice(`Transcribed "${file.name}" & key details extracted! Review and edit below.`);
         setTimeout(() => setVoiceNotice(null), 3500);
       } else {
-        throw new Error(data.error || 'Failed to transcribe file');
+        throw new Error(data.message || data.error || 'Failed to transcribe file');
       }
     } catch (err: any) {
       const errMsg = formatAiErrorMessage(err, 'Failed to transcribe audio file');
@@ -2332,7 +2374,7 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
     try {
       setIsAnalysisLoading(true);
       const response = await requestLegalAnalysis(
-        { caseId: requestCaseId, signal: abortController.signal },
+        { caseId: requestCaseId, signal: abortController.signal, language },
         token
       );
 
@@ -2723,30 +2765,54 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
                   </button>
                 )}
 
-                {/* Language toggle */}
-                <div className="flex items-center gap-1.5 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setVoiceLanguage('en-IN')}
-                    className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
-                      voiceLanguage === 'en-IN'
-                        ? 'bg-white dark:bg-zinc-800 text-[#007FFF] shadow-xs font-semibold'
-                        : 'text-zinc-600 dark:text-zinc-400'
-                    }`}
+                {/* Voice Language selector (all 12 supported locales + quick En/Hi toggle) */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <div className="flex items-center gap-1 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        hasManualVoiceLanguageRef.current = true;
+                        setVoiceLanguage('en-IN');
+                      }}
+                      className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                        voiceLanguage === 'en-IN'
+                          ? 'bg-white dark:bg-zinc-800 text-[#007FFF] shadow-xs font-semibold'
+                          : 'text-zinc-600 dark:text-zinc-400'
+                      }`}
+                    >
+                      English
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        hasManualVoiceLanguageRef.current = true;
+                        setVoiceLanguage('hi-IN');
+                      }}
+                      className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                        voiceLanguage === 'hi-IN'
+                          ? 'bg-white dark:bg-zinc-800 text-[#007FFF] shadow-xs font-semibold'
+                          : 'text-zinc-600 dark:text-zinc-400'
+                      }`}
+                    >
+                      हिन्दी (Hindi)
+                    </button>
+                  </div>
+                  <select
+                    aria-label="Voice Recognition Language"
+                    data-testid="casebuilder-voice-lang-select"
+                    value={voiceLanguage}
+                    onChange={(e) => {
+                      hasManualVoiceLanguageRef.current = true;
+                      setVoiceLanguage(e.target.value);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900 text-xs font-medium text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-[#007FFF] cursor-pointer"
                   >
-                    English
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setVoiceLanguage('hi-IN')}
-                    className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
-                      voiceLanguage === 'hi-IN'
-                        ? 'bg-white dark:bg-zinc-800 text-[#007FFF] shadow-xs font-semibold'
-                        : 'text-zinc-600 dark:text-zinc-400'
-                    }`}
-                  >
-                    हिन्दी (Hindi)
-                  </button>
+                    {Object.values(LANGUAGE_METADATA).map((meta) => (
+                      <option key={meta.code} value={meta.speechLocale}>
+                        {meta.nativeLabel} ({meta.speechLocale})
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
             </div>

@@ -29,7 +29,8 @@ import {
   Sparkles,
   ArrowRight,
   LogOut,
-  ChevronRight
+  ChevronRight,
+  BookOpen
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -55,7 +56,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
   onSelectCaseById,
   children,
 }) => {
-  const { language, setLanguage, mode, setMode } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
   const { theme, setTheme, resolvedTheme } = useTheme();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -72,32 +73,34 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
   const getBreadcrumbLabel = () => {
     switch (activeTab) {
       case 'overview':
-        return 'Dashboard';
+        return t('nav_overview');
       case 'my_cases':
-        return 'My Cases';
+        return t('nav_my_cases');
       case 'new_case':
       case 'builder':
-        return 'Smart Case Builder';
+        return t('nav_case_builder');
       case 'trust':
-        return 'TrustCheck';
+        return t('nav_trust_check');
       case 'evidence':
-        return 'Smart Case Builder · Evidence';
+        return `${t('nav_case_builder')} · ${t('nav_evidence_intel')}`;
       case 'readiness':
-        return 'Smart Case Builder · Readiness';
+        return `${t('nav_case_builder')} · Readiness`;
       case 'navigator':
-        return 'Resolution Navigator';
+        return t('nav_resolution_nav');
       case 'dossier':
-        return 'Case Dossier';
+        return t('nav_case_dossier');
       case 'monitoring':
-        return 'Smart Case Monitoring';
+        return t('nav_monitoring');
       case 'simplifier':
-        return 'Legal Simplifier';
+        return t('nav_learn_understand');
+      case 'legal_rag':
+        return t('nav_legal_rag');
       case 'custody':
-        return 'Digital Custody Proof';
+        return t('nav_custody_proof');
       case 'settings':
-        return 'Settings';
+        return t('nav_settings');
       default:
-        return 'Workspace';
+        return t('nav_workspace');
     }
   };
 
@@ -135,7 +138,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
           <div className="space-y-1">
             {!sidebarCollapsed && (
               <div className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-3 mb-2 font-mono">
-                WORKFLOW & CASES
+                {t('nav_section_workflow')}
               </div>
             )}
 
@@ -152,7 +155,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
               }`}
             >
               <LayoutDashboard className="w-4 h-4 shrink-0" />
-              {!sidebarCollapsed && <span>Dashboard</span>}
+              {!sidebarCollapsed && <span>{t('nav_overview')}</span>}
             </button>
 
             {/* 2. TrustCheck */}
@@ -168,7 +171,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
               }`}
             >
               <ShieldCheck className="w-4 h-4 shrink-0" />
-              {!sidebarCollapsed && <span>TrustCheck</span>}
+              {!sidebarCollapsed && <span>{t('nav_trust_check')}</span>}
             </button>
 
             {/* 3. Smart Case Builder */}
@@ -184,7 +187,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
               }`}
             >
               <FileText className="w-4 h-4 shrink-0" />
-              {!sidebarCollapsed && <span>Smart Case Builder</span>}
+              {!sidebarCollapsed && <span>{t('nav_case_builder')}</span>}
             </button>
 
             {/* 4. Resolution Navigator */}
@@ -200,7 +203,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
               }`}
             >
               <Compass className="w-4 h-4 shrink-0" />
-              {!sidebarCollapsed && <span>Resolution Navigator</span>}
+              {!sidebarCollapsed && <span>{t('nav_resolution_nav')}</span>}
             </button>
 
             {/* 5. Case Dossier */}
@@ -216,7 +219,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
               }`}
             >
               <Layers className="w-4 h-4 shrink-0" />
-              {!sidebarCollapsed && <span>Case Dossier</span>}
+              {!sidebarCollapsed && <span>{t('nav_case_dossier')}</span>}
             </button>
 
             {/* 6. My Cases with count */}
@@ -233,7 +236,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
             >
               <div className="flex items-center gap-3">
                 <FolderOpen className="w-4 h-4 shrink-0" />
-                {!sidebarCollapsed && <span>My Cases</span>}
+                {!sidebarCollapsed && <span>{t('nav_my_cases')}</span>}
               </div>
               {!sidebarCollapsed && (
                 <span className="w-5 h-5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 text-[10px] font-mono flex items-center justify-center font-bold">
@@ -247,7 +250,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
           <div className="space-y-1">
             {!sidebarCollapsed && (
               <div className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-3 mb-2 font-mono">
-                TOOLS & LEGAL
+                {t('nav_section_tools')}
               </div>
             )}
 
@@ -264,7 +267,23 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
               }`}
             >
               <Scale className="w-4 h-4 shrink-0" />
-              {!sidebarCollapsed && <span>Legal Simplifier</span>}
+              {!sidebarCollapsed && <span>{t('nav_learn_understand')}</span>}
+            </button>
+
+            {/* 8. Legal Knowledge Base (RAG) */}
+            <button
+              onClick={() => {
+                setActiveTab('legal_rag');
+                setMobileMenuOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
+                activeTab === 'legal_rag'
+                  ? 'bg-[#007FFF]/10 text-[#007FFF]'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
+              }`}
+            >
+              <BookOpen className="w-4 h-4 shrink-0" />
+              {!sidebarCollapsed && <span>{t('nav_legal_rag')}</span>}
             </button>
           </div>
 
@@ -272,7 +291,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
           <div className="space-y-1">
             {!sidebarCollapsed && (
               <div className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-3 mb-2 font-mono">
-                ACCOUNT
+                {t('nav_section_account')}
               </div>
             )}
 
@@ -288,7 +307,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
               }`}
             >
               <Settings className="w-4 h-4 shrink-0" />
-              {!sidebarCollapsed && <span>Settings</span>}
+              {!sidebarCollapsed && <span>{t('nav_settings')}</span>}
             </button>
           </div>
 
@@ -300,19 +319,19 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
             <div className="p-3.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/20 border border-blue-200/60 dark:border-blue-900/40 space-y-1.5">
               <div className="flex items-center gap-1.5 text-xs font-bold text-[#007FFF]">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Need a hand?</span>
+                <span>{t('sidebar_need_hand')}</span>
               </div>
               <p className="text-[11px] text-zinc-600 dark:text-zinc-400 leading-snug">
-                Ask the assistant how to take the next step.
+                {t('sidebar_need_hand_desc')}
               </p>
               <button
                 onClick={() => {
-                  const btn = document.querySelector('button[title="Open NivaranSetu Assistant"]') as HTMLButtonElement;
+                  const btn = document.querySelector('button[title="Open NivaranSetu AI Assistant"]') as HTMLButtonElement;
                   if (btn) btn.click();
                 }}
                 className="text-[11px] font-semibold text-[#007FFF] hover:underline flex items-center gap-1 pt-0.5 cursor-pointer"
               >
-                <span>Chat with assistant</span>
+                <span>{t('sidebar_chat_assistant')}</span>
                 <ArrowRight className="w-3 h-3" />
               </button>
             </div>
@@ -339,7 +358,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
               <Menu className="w-5 h-5" />
             </button>
 
-            <span className="font-medium text-zinc-500">Workspace</span>
+            <span className="font-medium text-zinc-500">{t('nav_workspace')}</span>
             <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
             <span className="font-bold text-zinc-950 dark:text-white truncate">
               {getBreadcrumbLabel()}
@@ -354,7 +373,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
               <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search cases..."
+                placeholder={t('search_placeholder')}
                 className="text-xs pl-8 pr-3 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-white focus:outline-none focus:border-[#007FFF] w-48 lg:w-64"
               />
             </div>
@@ -446,14 +465,14 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
                     }}
                     className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300"
                   >
-                    Settings & Privacy
+                    {t('nav_settings')}
                   </button>
                   <button
                     onClick={onLogout}
                     className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 font-medium flex items-center gap-1.5"
                   >
                     <LogOut className="w-3.5 h-3.5" />
-                    <span>Log out</span>
+                    <span>{t('nav_logout')}</span>
                   </button>
                 </div>
               )}

@@ -113,6 +113,7 @@ const tabsToTest = [
   'dossier',
   'monitoring',
   'simplifier',
+  'legal_rag',
   'trust',
   'settings',
 ];

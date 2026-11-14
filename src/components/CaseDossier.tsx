@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GrievanceCase } from '../types';
+import { GrievanceCase, EvidenceItem, AppMode } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { exportCaseDossierToPDF } from '../utils/pdfExport';
 import {
@@ -29,6 +29,83 @@ import {
   Lock
 } from 'lucide-react';
 import { GuidedNavigationHeader } from './GuidedNavigationHeader';
+
+export function getEvidenceIntegrityTextLabel(
+  ev: Pick<EvidenceItem, 'verifiedOriginal' | 'hasBlob' | 'sha256Hash'>
+): string {
+  if (ev.verifiedOriginal === true) {
+    return 'Verified Original';
+  }
+  if (ev.hasBlob === true && ev.sha256Hash) {
+    return 'Unverified (Client SHA-256 Recorded; Pending Server Verification)';
+  }
+  return 'Unverified (Metadata Only)';
+}
+
+export function buildCaseDossierText(
+  currentCase: GrievanceCase,
+  mode: AppMode,
+  effectiveCitizenName: string
+): string {
+  return `========================================================================
+NIVARANSETU · CITIZEN GRIEVANCE DOSSIER
+Case ID: ${currentCase.id}
+Date Generated: ${new Date().toISOString()}
+========================================================================
+
+1. EXECUTIVE CASE SUMMARY
+-------------------------
+Complainant: ${effectiveCitizenName}
+Subject: ${currentCase.title}
+Category: ${currentCase.category.replace(/_/g, ' ').toUpperCase()}
+Involved Party: ${currentCase.involvedEntity}
+Incident Date: ${currentCase.incidentDate}
+Location: ${currentCase.incidentLocation}
+Disputed Amount: INR ${currentCase.disputedAmount ? currentCase.disputedAmount.toLocaleString('en-IN') : '0'}
+Readiness Score: ${currentCase.readinessScore}%
+
+Narrative:
+${mode === 'simple' ? currentCase.simpleSummary : currentCase.description}
+
+2. CHRONOLOGICAL TIMELINE OF FACTS
+----------------------------------
+${currentCase.timeline
+  .map(
+    (t, i) =>
+      `[${i + 1}] Date: ${t.date}\n    Event: ${t.title}\n    Details: ${t.description}\n`
+  )
+  .join('\n')}
+
+3. EVIDENCE EXHIBIT INDEX & SHA-256 HASHES
+------------------------------------------
+${currentCase.evidence
+  .map(
+    (ev, i) =>
+      `Exhibit Ex-0${i + 1}: ${ev.title}\n  File: ${ev.fileName} (${ev.fileSize})\n  Type: ${ev.category}\n  SHA-256 Digest: ${ev.sha256Hash || 'None (Metadata Only)'}\n  Integrity: ${getEvidenceIntegrityTextLabel(ev)}\n`
+  )
+  .join('\n')}
+
+4. RECOMMENDED STATUTORY AUTHORITY
+----------------------------------
+Authority: ${currentCase.recommendedAuthority.name}
+Official Portal: ${currentCase.recommendedAuthority.portalName} (${currentCase.recommendedAuthority.portalUrl})
+Statutory Fee: ${currentCase.recommendedAuthority.filingFee}
+Resolution Benchmark: ${currentCase.recommendedAuthority.averageResolutionTime}
+
+5. FORMAL COMPLAINT DRAFT
+-------------------------
+Subject: ${currentCase.complaintDraft.subject}
+
+Body:
+${mode === 'simple' ? currentCase.complaintDraft.simpleBody : currentCase.complaintDraft.formalBody}
+
+Relief Sought:
+${currentCase.complaintDraft.reliefSought}
+
+========================================================================
+Generated via NivaranSetu Grievance Intelligence Platform
+========================================================================`;
+}
 
 interface CaseDossierProps {
   currentCase: GrievanceCase;
@@ -84,64 +161,7 @@ export const CaseDossier: React.FC<CaseDossierProps> = ({
   };
 
   const handleDownloadTextDossier = () => {
-    const content = `========================================================================
-NIVARANSETU · CITIZEN GRIEVANCE DOSSIER
-Case ID: ${currentCase.id}
-Date Generated: ${new Date().toISOString()}
-========================================================================
-
-1. EXECUTIVE CASE SUMMARY
--------------------------
-Complainant: ${effectiveCitizenName}
-Subject: ${currentCase.title}
-Category: ${currentCase.category.replace(/_/g, ' ').toUpperCase()}
-Involved Party: ${currentCase.involvedEntity}
-Incident Date: ${currentCase.incidentDate}
-Location: ${currentCase.incidentLocation}
-Disputed Amount: INR ${currentCase.disputedAmount ? currentCase.disputedAmount.toLocaleString('en-IN') : '0'}
-Readiness Score: ${currentCase.readinessScore}%
-
-Narrative:
-${mode === 'simple' ? currentCase.simpleSummary : currentCase.description}
-
-2. CHRONOLOGICAL TIMELINE OF FACTS
-----------------------------------
-${currentCase.timeline
-  .map(
-    (t, i) =>
-      `[${i + 1}] Date: ${t.date}\n    Event: ${t.title}\n    Details: ${t.description}\n`
-  )
-  .join('\n')}
-
-3. EVIDENCE EXHIBIT INDEX & SHA-256 HASHES
-------------------------------------------
-${currentCase.evidence
-  .map(
-    (ev, i) =>
-      `Exhibit Ex-0${i + 1}: ${ev.title}\n  File: ${ev.fileName} (${ev.fileSize})\n  Type: ${ev.category}\n  SHA-256 Digest: ${ev.sha256Hash}\n  Integrity: Verified Original\n`
-  )
-  .join('\n')}
-
-4. RECOMMENDED STATUTORY AUTHORITY
-----------------------------------
-Authority: ${currentCase.recommendedAuthority.name}
-Official Portal: ${currentCase.recommendedAuthority.portalName} (${currentCase.recommendedAuthority.portalUrl})
-Statutory Fee: ${currentCase.recommendedAuthority.filingFee}
-Resolution Benchmark: ${currentCase.recommendedAuthority.averageResolutionTime}
-
-5. FORMAL COMPLAINT DRAFT
--------------------------
-Subject: ${currentCase.complaintDraft.subject}
-
-Body:
-${mode === 'simple' ? currentCase.complaintDraft.simpleBody : currentCase.complaintDraft.formalBody}
-
-Relief Sought:
-${currentCase.complaintDraft.reliefSought}
-
-========================================================================
-Generated via NivaranSetu Grievance Intelligence Platform
-========================================================================`;
+    const content = buildCaseDossierText(currentCase, mode, effectiveCitizenName);
 
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);

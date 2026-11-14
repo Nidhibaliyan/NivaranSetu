@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../context/LanguageContext';
+import { getSpeechLocale, getLanguageMeta } from '../i18n/appTranslations';
 import {
   MessageSquare,
   X,
@@ -36,8 +37,10 @@ import {
 import {
   CHAT_CLIENT_TIMEOUT_MS,
   TRANSCRIBE_CLIENT_TIMEOUT_MS,
+  AuthSessionError,
+  authenticatedFetchWithTimeout,
   boundConversationHistory,
-  fetchWithTimeout,
+  extractAiErrorFromResponse,
   formatAiErrorMessage,
 } from '../utils/aiClientUtils';
 
@@ -148,13 +151,17 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
+      const speechLocale = getSpeechLocale(language);
+      const langMeta = getLanguageMeta(language);
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
+      recognition.lang = speechLocale;
 
       recognition.onstart = () => {
         setIsTranscribing(true);
-        setTranscriptionNotice(`Listening (${language === 'hi' ? 'Hindi' : 'English'}). Speak your question...`);
+        setTranscriptionNotice(
+          `Listening (${langMeta.nativeLabel} · ${speechLocale}). Speak your question...`
+        );
       };
 
       recognition.onresult = (event: any) => {
@@ -169,8 +176,23 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
         }
       };
 
-      recognition.onerror = () => {
+      recognition.onerror = (event: any) => {
         setIsTranscribing(false);
+        const errCode = event?.error || 'unknown';
+        if (errCode === 'language-not-supported') {
+          setTranscriptionNotice(
+            `Browser speech recognition does not support ${langMeta.label} (${speechLocale}) in this browser. Upload audio or type directly to transcribe via Gemini.`
+          );
+        } else if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+          setMicBlocked(true);
+          setTranscriptionNotice(
+            'Microphone access is blocked by your browser. You can upload an audio file (.mp3/.wav/.m4a) or type your grievance.'
+          );
+        } else if (errCode !== 'aborted') {
+          setTranscriptionNotice(
+            `Voice recognition stopped (${errCode}). Try speaking again or upload audio.`
+          );
+        }
       };
 
       recognition.onend = () => {
@@ -178,10 +200,13 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
       };
 
       browserRecognitionRef.current = recognition;
+    } else {
+      browserRecognitionRef.current = null;
     }
   }, [language]);
 
   const handleToggleVoiceInput = () => {
+    const speechLocale = getSpeechLocale(language);
     if (isTranscribing) {
       if (browserRecognitionRef.current) {
         try {
@@ -196,6 +221,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
     } else {
       if (browserRecognitionRef.current) {
         try {
+          browserRecognitionRef.current.lang = speechLocale;
           browserRecognitionRef.current.start();
           setIsTranscribing(true);
         } catch {
@@ -238,7 +264,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
     try {
       const { base64, mimeType } = await micRecorderRef.current.stop();
 
-      const response = await fetchWithTimeout(
+      const response = await authenticatedFetchWithTimeout(
         '/api/gemini/transcribe',
         {
           method: 'POST',
@@ -246,22 +272,29 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
           body: JSON.stringify({
             audioBase64: base64,
             mimeType,
-            prompt: language === 'hi' 
-              ? 'इस नागरिक शिकायत रिकॉर्डिंग को सटीक रूप से ट्रांसक्राइब करें।'
-              : 'Transcribe this citizen grievance recording accurately with all transaction values and dates.',
+            language,
+            prompt:
+              language === 'hi'
+                ? 'इस नागरिक शिकायत रिकॉर्डिंग को सटीक रूप से ट्रांसक्राइब करें।'
+                : `Transcribe this citizen grievance recording accurately in ${getLanguageMeta(language).label} (${language}) with all transaction values and dates.`,
           }),
         },
         TRANSCRIBE_CLIENT_TIMEOUT_MS
       );
 
+      if (!response.ok) {
+        const errMsg = await extractAiErrorFromResponse(response, 'Failed to transcribe');
+        throw new Error(errMsg);
+      }
+
       const data = await response.json();
 
-      if (response.ok && data.text) {
+      if (data.text) {
         setInputMessage((prev) => (prev ? `${prev} ${data.text}` : data.text));
         setTranscriptionNotice('Transcribed successfully via gemini-3.5-transcribe');
         setTimeout(() => setTranscriptionNotice(null), 3000);
       } else {
-        throw new Error(data.error || 'Failed to transcribe');
+        throw new Error(data.message || data.error || 'Failed to transcribe');
       }
     } catch (err: any) {
       console.warn('Transcription error:', err?.message || err);
@@ -282,7 +315,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
     setTranscriptionNotice(`Transcribing "${file.name}" with gemini-3.5-transcribe...`);
     try {
       const { base64, mimeType } = await audioFileToBase64(file);
-      const response = await fetchWithTimeout(
+      const response = await authenticatedFetchWithTimeout(
         '/api/gemini/transcribe',
         {
           method: 'POST',
@@ -290,21 +323,28 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
           body: JSON.stringify({
             audioBase64: base64,
             mimeType,
-            prompt: language === 'hi' 
-              ? 'इस नागरिक शिकायत रिकॉर्डिंग को सटीक रूप से ट्रांसक्राइब करें।'
-              : 'Transcribe this citizen grievance audio accurately with all transaction numbers, dates, and amounts.',
+            language,
+            prompt:
+              language === 'hi'
+                ? 'इस नागरिक शिकायत रिकॉर्डिंग को सटीक रूप से ट्रांसक्राइब करें।'
+                : `Transcribe this citizen grievance audio accurately in ${getLanguageMeta(language).label} (${language}) with all transaction numbers, dates, and amounts.`,
           }),
         },
         TRANSCRIBE_CLIENT_TIMEOUT_MS
       );
 
+      if (!response.ok) {
+        const errMsg = await extractAiErrorFromResponse(response, 'Transcription failed');
+        throw new Error(errMsg);
+      }
+
       const data = await response.json();
-      if (response.ok && data.text) {
+      if (data.text) {
         setInputMessage((prev) => (prev ? `${prev} ${data.text}` : data.text));
         setTranscriptionNotice('Audio file transcribed successfully with gemini-3.5-transcribe!');
         setTimeout(() => setTranscriptionNotice(null), 3500);
       } else {
-        throw new Error(data.error || 'Transcription failed');
+        throw new Error(data.message || data.error || 'Transcription failed');
       }
     } catch (err: any) {
       console.warn('Audio file transcription error:', err?.message || err);
@@ -324,7 +364,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
     setTranscriptionNotice('Transcribing sample grievance recording with gemini-3.5-transcribe...');
     try {
       const sampleBase64 = createSampleAudioBase64();
-      const response = await fetchWithTimeout(
+      const response = await authenticatedFetchWithTimeout(
         '/api/gemini/transcribe',
         {
           method: 'POST',
@@ -338,10 +378,15 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
         TRANSCRIBE_CLIENT_TIMEOUT_MS
       );
 
-      const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || `Server responded with HTTP ${response.status}`);
+        const errMsg = await extractAiErrorFromResponse(
+          response,
+          `Server responded with HTTP ${response.status}`
+        );
+        throw new Error(errMsg);
       }
+
+      const data = await response.json();
       if (!data.text) {
         throw new Error('No transcription returned');
       }
@@ -390,7 +435,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
 
       const effectiveUseSearch = useSearchGrounding && selectedModel === 'gemini-4-hydrogen';
 
-      const res = await fetchWithTimeout(
+      const res = await authenticatedFetchWithTimeout(
         '/api/gemini/chat',
         {
           method: 'POST',
@@ -399,6 +444,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
             messages: chatHistory,
             requestedModel: selectedModel,
             useSearchGrounding: effectiveUseSearch,
+            language,
             taskType:
               selectedModel === 'gemini-4-argon'
                 ? 'complex'
@@ -410,11 +456,12 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
         CHAT_CLIENT_TIMEOUT_MS
       );
 
-      const data = await res.json();
-
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to generate response');
+        const errMsg = await extractAiErrorFromResponse(res, 'Failed to generate response');
+        throw new Error(errMsg);
       }
+
+      const data = await res.json();
 
       let quickAction = undefined;
       const lowerReply = (data.text || '').toLowerCase();
@@ -554,9 +601,41 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
     setMicBlocked(false);
 
     try {
-      // 1. Establish WebSocket connection to backend live bridge
+      // 1. Obtain a short-lived, single-use Live Voice connection ticket via authenticated HTTP endpoint
+      const ticketRes = await authenticatedFetchWithTimeout(
+        '/api/live/ticket',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        10000
+      );
+
+      if (currentSessionIdRef.current !== sessionId) return;
+
+      if (!ticketRes.ok) {
+        const authErrMsg = await extractAiErrorFromResponse(
+          ticketRes,
+          'Unable to authorize Live Voice session. Please sign in again.'
+        );
+        setLiveStatus(authErrMsg);
+        setIsLiveConnected(false);
+        setLiveAgentSpeaking(false);
+        return;
+      }
+
+      const ticketData = await ticketRes.json().catch(() => null);
+      const ticket = typeof ticketData?.ticket === 'string' ? ticketData.ticket.trim() : '';
+      if (!ticket) {
+        setLiveStatus('Live Voice authorization ticket missing. Please retry or sign in again.');
+        setIsLiveConnected(false);
+        setLiveAgentSpeaking(false);
+        return;
+      }
+
+      // 2. Establish WebSocket connection to backend live bridge using single-use opaque ticket (no JWT in URL)
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/api/live`;
+      const wsUrl = `${protocol}//${window.location.host}/api/live?ticket=${encodeURIComponent(ticket)}`;
       const ws = new WebSocket(wsUrl);
       liveWsRef.current = ws;
 
@@ -701,10 +780,31 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
       if (currentSessionIdRef.current !== sessionId) return;
       console.warn('Live voice session initialization notice:', err?.name || err?.message || 'Access denied');
       teardownAudioHardware();
-      setMicBlocked(true);
-      setLiveStatus(
-        'Microphone permission is blocked by your browser. Please allow microphone access in your browser settings (click lock icon in address bar) to talk live.'
-      );
+      const isAuthFailure =
+        err instanceof AuthSessionError ||
+        err?.code === 'AUTH_REQUIRED' ||
+        err?.code === 'SESSION_EXPIRED' ||
+        err?.status === 401;
+      const isMicPermissionError =
+        err?.name === 'NotAllowedError' ||
+        err?.name === 'PermissionDeniedError' ||
+        err?.name === 'NotFoundError' ||
+        err?.name === 'NotReadableError' ||
+        String(err?.message || '').toLowerCase().includes('microphone') ||
+        String(err?.message || '').toLowerCase().includes('permission');
+
+      if (isAuthFailure) {
+        setMicBlocked(false);
+        setLiveStatus(err?.message || 'Your session has expired. Please sign in again to use Live Voice.');
+      } else if (isMicPermissionError) {
+        setMicBlocked(true);
+        setLiveStatus(
+          'Microphone permission is blocked by your browser. Please allow microphone access in your browser settings (click lock icon in address bar) to talk live.'
+        );
+      } else {
+        setMicBlocked(false);
+        setLiveStatus(formatAiErrorMessage(err, 'Unable to start Live Voice conversation right now.'));
+      }
       if (liveWsRef.current) {
         try { liveWsRef.current.close(); } catch (_) {}
         liveWsRef.current = null;
@@ -761,7 +861,7 @@ export const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ onNavigateToTa
 
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
+    utterance.lang = getSpeechLocale(language);
     utterance.onend = () => setTtsActive(null);
     utterance.onerror = () => setTtsActive(null);
 

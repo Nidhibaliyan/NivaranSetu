@@ -48,13 +48,17 @@ export const LegalRagPanel: React.FC = () => {
         <button
           type="submit"
           disabled={loading || !question.trim()}
-          className="rounded-xl bg-[#007FFF] px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-xl bg-[#007FFF] px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
         >
           {loading ? copy.searching : copy.ask}
         </button>
       </form>
 
-      {error && <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{error}</p>}
+      {error && (
+        <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+          {error}
+        </p>
+      )}
 
       {result && (
         <div className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-[#18181B]">
@@ -64,11 +68,26 @@ export const LegalRagPanel: React.FC = () => {
               <h3 className="mb-3 text-sm font-bold">{copy.sources}</h3>
               <ol className="space-y-3">
                 {result.sources.map((source) => (
-                  <li key={`${source.marker}-${source.sourceUrl}`} className="rounded-xl bg-zinc-50 p-3 text-xs dark:bg-zinc-900">
-                    <div className="font-bold">[{source.marker}] {source.title}</div>
-                    <div className="mt-1 text-zinc-500">{source.authority}{source.sectionRef ? ` · ${source.sectionRef}` : ''}</div>
+                  <li
+                    key={`${source.marker}-${source.sourceUrl}-${source.pageNumber ?? 1}`}
+                    className="rounded-xl bg-zinc-50 p-3 text-xs dark:bg-zinc-900"
+                  >
+                    <div className="font-bold">
+                      [{source.marker}] {source.title}
+                      {source.pageNumber ? ` · p. ${source.pageNumber}` : ''}
+                    </div>
+                    <div className="mt-1 text-zinc-500">
+                      {source.authority}
+                      {source.sectionRef ? ` · ${source.sectionRef}` : ''}
+                      {source.effectiveDate ? ` · ${source.effectiveDate}` : ''}
+                    </div>
                     <p className="mt-2 leading-5 text-zinc-600 dark:text-zinc-400">{source.excerpt}</p>
-                    <a className="mt-2 inline-block font-semibold text-blue-600 hover:underline dark:text-blue-400" href={source.sourceUrl} target="_blank" rel="noreferrer">
+                    <a
+                      className="mt-2 inline-block font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                      href={source.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       {source.sourceUrl}
                     </a>
                   </li>

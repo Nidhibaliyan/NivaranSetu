@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useLanguage } from '../context/LanguageContext';
+import { getSpeechLocale } from '../i18n/appTranslations';
 import {
   FileText,
   Volume2,
@@ -22,7 +23,8 @@ import {
 import { GuidedNavigationHeader } from './GuidedNavigationHeader';
 import {
   CHAT_CLIENT_TIMEOUT_MS,
-  fetchWithTimeout,
+  authenticatedFetchWithTimeout,
+  extractAiErrorFromResponse,
   formatAiErrorMessage,
   parseNoticeCategory,
 } from '../utils/aiClientUtils';
@@ -138,10 +140,24 @@ export const LegalSimplifier: React.FC<LegalSimplifierProps> = ({
     : sampleNotice;
 
   const handleToggleReadAloud = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      setIsReadingAloud(false);
+      return;
+    }
     if (!isReadingAloud) {
+      window.speechSynthesis.cancel();
+      const textToSpeak =
+        language === 'hi'
+          ? displayedNotice.hindiTranslation
+          : displayedNotice.simpleEnglish;
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      utterance.lang = getSpeechLocale(language);
+      utterance.onend = () => setIsReadingAloud(false);
+      utterance.onerror = () => setIsReadingAloud(false);
       setIsReadingAloud(true);
-      setTimeout(() => setIsReadingAloud(false), 5000);
+      window.speechSynthesis.speak(utterance);
     } else {
+      window.speechSynthesis.cancel();
       setIsReadingAloud(false);
     }
   };
@@ -176,7 +192,7 @@ MANDATORY_ACTIONS:
 - [Specific actions the citizen must take in response, one per line with a dash]`;
 
     try {
-      const res = await fetchWithTimeout(
+      const res = await authenticatedFetchWithTimeout(
         '/api/gemini/chat',
         {
           method: 'POST',
@@ -185,14 +201,15 @@ MANDATORY_ACTIONS:
             messages: [{ role: 'user', text: prompt }],
             taskType: 'complex',
             requestedModel: 'gemini-4-hydrogen',
+            language,
           }),
         },
         CHAT_CLIENT_TIMEOUT_MS
       );
 
       if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || `Server responded with status ${res.status}`);
+        const errMsg = await extractAiErrorFromResponse(res, `Server responded with status ${res.status}`);
+        throw new Error(errMsg);
       }
 
       const data = await res.json();

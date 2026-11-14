@@ -14,18 +14,19 @@ export interface LegalAnalysisClientOptions {
   caseId: string;
   token?: string;
   signal?: AbortSignal;
+  language?: string;
 }
 
 /**
  * Requests statutory legal analysis from the backend for a saved grievance case.
  * - POSTs to /api/gemini/legal-analysis with Authorization: Bearer <token>.
- * - Sends { caseId } in the request body.
+ * - Sends { caseId } in the request body (plus optional language when provided).
  * - Reuses getValidAccessToken() if token is not passed explicitly.
  * - Uses fetchWithTimeout with a 45-second client timeout.
  * - Forwards AbortSignal for immediate caller-triggered cancellation.
  * - Validates non-2xx HTTP responses and malformed or invalid response payloads.
  *
- * @param options Object containing caseId, and optional token or signal.
+ * @param options Object containing caseId, and optional token, signal, or language.
  * @param explicitToken Optional access token (overrides options.token if provided).
  * @param explicitSignal Optional AbortSignal (overrides options.signal if provided).
  */
@@ -59,6 +60,10 @@ export async function requestLegalAnalysis(
   }
 
   const signal = explicitSignal ?? options.signal;
+  const payload: Record<string, string> = { caseId };
+  if (typeof options.language === 'string' && options.language.trim()) {
+    payload.language = options.language.trim();
+  }
 
   // Dispatch HTTP request using existing fetchWithTimeout utility with 45s timeout
   const response = await fetchWithTimeout(
@@ -69,7 +74,7 @@ export async function requestLegalAnalysis(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ caseId }),
+      body: JSON.stringify(payload),
       signal,
     },
     LEGAL_ANALYSIS_CLIENT_TIMEOUT_MS

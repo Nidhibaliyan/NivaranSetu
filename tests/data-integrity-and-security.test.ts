@@ -214,17 +214,21 @@ persistCases([testCaseWithEmptyHashes]).then(() => {
         'evidence_accessed',
         'evidence_downloaded',
         'evidence_removed',
+        'evidence_verified',
         'complaint_generated',
+        'filing_ref_recorded',
+        'submission_recorded',
         'reminder_created',
         'reminder_completed',
         'reminder_deleted',
+        'response_received',
+        'followup_letter_generated',
         'dossier_exported',
       ];
 
-      assert(clientAllowlist.length === 13, 'Strict client allowlist contains exactly 13 event types', clientAllowlist.length, 13);
+      assert(clientAllowlist.length === 18, 'Updated client allowlist contains 18 permitted citizen/workflow event types', clientAllowlist.length, 18);
 
       const reservedSystemAndAuthorityTypes: CustodyEventType[] = [
-        'evidence_verified',
         'ocr_processed',
         'entity_extracted',
         'claim_mapped',
@@ -232,14 +236,10 @@ persistCases([testCaseWithEmptyHashes]).then(() => {
         'authority_recommended',
         'response_analyzed',
         'escalation_evaluated',
-        'followup_letter_generated',
         'dossier_generated',
-        'filing_ref_recorded',
-        'submission_recorded',
-        'response_received',
       ];
 
-      assert(reservedSystemAndAuthorityTypes.length === 13, 'Reserved system and authority set contains exactly 13 event types', reservedSystemAndAuthorityTypes.length, 13);
+      assert(reservedSystemAndAuthorityTypes.length === 8, 'Strictly system-only pipeline set contains 8 reserved event types', reservedSystemAndAuthorityTypes.length, 8);
 
       let overlapCount = 0;
       for (const clientType of clientAllowlist) {
@@ -247,9 +247,9 @@ persistCases([testCaseWithEmptyHashes]).then(() => {
           overlapCount++;
         }
       }
-      assert(overlapCount === 0, 'Zero overlap between client allowlist and reserved system/authority set', overlapCount, 0);
+      assert(overlapCount === 0, 'Zero overlap between client allowlist and strictly reserved system set', overlapCount, 0);
 
-      // Total set is 13 + 13 = 26
+      // Total set is 18 + 8 = 26
       assert(clientAllowlist.length + reservedSystemAndAuthorityTypes.length === 26, 'Total union of custody event types equals 26', clientAllowlist.length + reservedSystemAndAuthorityTypes.length, 26);
 
       // -------------------------------------------------------------

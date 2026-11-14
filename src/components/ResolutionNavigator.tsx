@@ -16,7 +16,8 @@ import { createCustodyEvent } from '../utils/caseStorage';
 import { saveNavigatorSession, fetchNavigatorSession } from '../utils/caseRepository';
 import {
   CHAT_CLIENT_TIMEOUT_MS,
-  fetchWithTimeout,
+  authenticatedFetchWithTimeout,
+  extractAiErrorFromResponse,
   formatAiErrorMessage,
 } from '../utils/aiClientUtils';
 import {
@@ -393,7 +394,7 @@ ${effectiveCase.complaintDraft?.formalBody || effectiveCase.description}`;
         'Provide current, accurate portal filing requirements, relevant statutory rules or circulars, and exact relief prayer tips in clear plain language.',
       ].join('\n');
 
-      const res = await fetchWithTimeout(
+      const res = await authenticatedFetchWithTimeout(
         '/api/gemini/chat',
         {
           method: 'POST',
@@ -402,15 +403,18 @@ ${effectiveCase.complaintDraft?.formalBody || effectiveCase.description}`;
             messages: [{ role: 'user', text: contextualPrompt }],
             requestedModel: 'gemini-4-hydrogen',
             useSearchGrounding: true,
+            language,
           }),
         },
         CHAT_CLIENT_TIMEOUT_MS
       );
 
-      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.error || `Server responded with HTTP ${res.status}`);
+        const errMsg = await extractAiErrorFromResponse(res, `Server responded with HTTP ${res.status}`);
+        throw new Error(errMsg);
       }
+
+      const data = await res.json().catch(() => ({}));
 
       setAiResponse(data.text || 'No response generated.');
       const sources: GroundingSource[] = Array.isArray(data.groundingSources)

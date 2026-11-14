@@ -1,6 +1,7 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -34,6 +35,8 @@ import {
   UPI_PIN_SAFETY_NOTICE,
   TRANSACTION_AI_DISCLAIMER,
 } from './src/utils/trustCheckAnalysis.ts';
+import { createLegalRagRouter } from './src/server/legalRagRouter.ts';
+import { normalizeLanguageCode, getLanguageMeta } from './src/i18n/appTranslations.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -226,7 +229,7 @@ export async function verifySupabaseAuth(
   if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({
       error: 'MISSING_AUTHORIZATION_HEADER',
-      message: 'Bearer authorization token is required for legal analysis.',
+      message: 'Bearer authorization token is required.',
     });
   }
 
@@ -453,6 +456,85 @@ const liveVoiceManager = new LiveVoiceManager({
   attemptWindowMs: 60 * 1000,
 });
 
+// Short-lived, single-use Live Voice WebSocket connection tickets (never exposes Supabase JWT in URLs)
+export const LIVE_TICKET_TTL_MS = 30 * 1000;
+const MAX_PENDING_LIVE_TICKETS = 500;
+
+interface LiveVoiceTicketRecord {
+  userId: string;
+  issuedIp: string;
+  expiresAt: number;
+}
+
+const liveVoiceTickets = new Map<string, LiveVoiceTicketRecord>();
+
+function purgeExpiredLiveTickets(now = Date.now()): void {
+  for (const [ticketKey, record] of liveVoiceTickets.entries()) {
+    if (now > record.expiresAt) {
+      liveVoiceTickets.delete(ticketKey);
+    }
+  }
+}
+
+export function issueLiveVoiceTicket(
+  userId: string,
+  clientIp: string,
+  ttlMs = LIVE_TICKET_TTL_MS
+): { ticket: string; expiresAt: number; expiresInMs: number } {
+  const now = Date.now();
+  purgeExpiredLiveTickets(now);
+
+  if (liveVoiceTickets.size >= MAX_PENDING_LIVE_TICKETS) {
+    const oldestKey = liveVoiceTickets.keys().next().value;
+    if (oldestKey) {
+      liveVoiceTickets.delete(oldestKey);
+    }
+  }
+
+  const effectiveTtl = Math.max(1, ttlMs);
+  const ticket = crypto.randomBytes(32).toString('base64url');
+  const expiresAt = now + effectiveTtl;
+
+  liveVoiceTickets.set(ticket, {
+    userId,
+    issuedIp: clientIp,
+    expiresAt,
+  });
+
+  return { ticket, expiresAt, expiresInMs: effectiveTtl };
+}
+
+export function consumeLiveVoiceTicket(
+  ticket: string | null | undefined
+): { valid: true; userId: string; issuedIp: string } | { valid: false; reason: string } {
+  if (!ticket || typeof ticket !== 'string' || !ticket.trim()) {
+    return { valid: false, reason: 'MISSING_TICKET' };
+  }
+
+  const cleanTicket = ticket.trim();
+  const record = liveVoiceTickets.get(cleanTicket);
+  if (!record) {
+    return { valid: false, reason: 'INVALID_OR_USED_TICKET' };
+  }
+
+  // Strictly atomic single-use consumption
+  liveVoiceTickets.delete(cleanTicket);
+
+  if (Date.now() > record.expiresAt) {
+    return { valid: false, reason: 'EXPIRED_TICKET' };
+  }
+
+  return {
+    valid: true,
+    userId: record.userId,
+    issuedIp: record.issuedIp,
+  };
+}
+
+export function clearLiveVoiceTickets(): void {
+  liveVoiceTickets.clear();
+}
+
 // -------------------------------------------------------------
 // SAFEGUARD 5: Security Headers via Helmet (Non-restrictive CSP)
 // -------------------------------------------------------------
@@ -556,6 +638,17 @@ const trustCheckLimiter = rateLimit({
   message: {
     error: 'RATE_LIMIT_EXCEEDED',
     message: 'Too many TrustCheck analysis requests. Please wait a few moments before trying again.',
+  },
+});
+
+const liveTicketLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  limit: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'RATE_LIMIT_EXCEEDED',
+    message: 'Too many Live Voice authorization requests. Please wait a moment and try again.',
   },
 });
 
@@ -750,10 +843,12 @@ function extractTranscriptionText(response: any): string {
 app.post(
   '/api/gemini/transcribe',
   transcribeLimiter,
+  verifySupabaseAuth,
   transcribeBodyParser,
-  async (req: Request, res: Response) => {
+  async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const ai = getTranscribeAiClient();
+      const aiOverride = req.app?.locals?.geminiAiClient;
+      const ai = aiOverride !== undefined ? aiOverride : getTranscribeAiClient();
       if (!ai) {
         return res.status(503).json({
           error: 'Gemini API key is not configured. Please set GEMINI_API_KEY in your .env file to enable audio transcription.',
@@ -762,7 +857,9 @@ app.post(
         });
       }
 
-      const { audioBase64, mimeType = 'audio/webm', prompt } = req.body || {};
+      const { audioBase64, mimeType = 'audio/webm', prompt, language } = req.body || {};
+      const normalizedLang = normalizeLanguageCode(language);
+      const langMeta = getLanguageMeta(normalizedLang);
 
       // Safeguard 1 & 10: Strict request validation
       if (!audioBase64 || typeof audioBase64 !== 'string') {
@@ -781,10 +878,14 @@ app.post(
         return res.status(400).json({ error: 'Audio payload is empty or exceeds the permitted size limit.' });
       }
 
-      const promptText =
+      const basePromptText =
         typeof prompt === 'string' && prompt.trim()
           ? prompt.trim().substring(0, 1000)
           : 'Transcribe this citizen grievance recording accurately. Capture all names, dates, financial amounts, reference IDs, and details without omissions.';
+      const promptText =
+        normalizedLang !== 'en'
+          ? `${basePromptText} Primary spoken language: ${langMeta.label} (${normalizedLang}).`
+          : basePromptText;
 
       const deadline = Date.now() + TRANSCRIBE_TOTAL_TIMEOUT_MS;
       const candidates = resolveModelCandidates('gemini-3.5-transcribe', 'transcribe');
@@ -804,7 +905,7 @@ app.post(
         const attemptTimeout = Math.min(TRANSCRIBE_PER_ATTEMPT_TIMEOUT_MS, remainingMs);
         try {
           console.log(`[Transcribe] Attempting speech transcription with model "${model}" (attempt timeout: ${attemptTimeout}ms)...`);
-          const attemptAi = getTranscribeAiClient(attemptTimeout) || ai;
+          const attemptAi = aiOverride !== undefined ? aiOverride : (getTranscribeAiClient(attemptTimeout) || ai);
           const response = await attemptAi.models.generateContent({
             model,
             contents: [
@@ -876,6 +977,7 @@ app.post(
         model: actualModelUsed,
         modelUsed: actualModelUsed,
         configured: true,
+        language: normalizedLang,
       });
     } catch (error: any) {
       console.error('[Transcribe Error] Final handler failure:', maskSensitive(error?.message || String(error)));
@@ -900,10 +1002,12 @@ app.post(
 app.post(
   '/api/gemini/chat',
   chatLimiter,
+  verifySupabaseAuth,
   chatBodyParser,
-  async (req: Request, res: Response) => {
+  async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const ai = getAiClient();
+      const aiOverride = req.app?.locals?.geminiAiClient;
+      const ai = aiOverride !== undefined ? aiOverride : getAiClient();
       if (!ai) {
         return res.status(503).json({
           error: 'Gemini API key is not configured. Please set GEMINI_API_KEY in your .env file to enable live AI responses.',
@@ -912,7 +1016,9 @@ app.post(
         });
       }
 
-      const { messages, taskType = 'general', requestedModel, useSearchGrounding = false } = req.body || {};
+      const { messages, taskType = 'general', requestedModel, useSearchGrounding = false, language } = req.body || {};
+      const normalizedLang = normalizeLanguageCode(language);
+      const langMeta = getLanguageMeta(normalizedLang);
 
       // Safeguard 1: Strict request validation
       if (!Array.isArray(messages) || messages.length === 0) {
@@ -954,9 +1060,13 @@ app.post(
       const shouldUseSearchGrounding = useSearchGrounding === true;
 
       // Safeguard 2: Enforce server-defined system instructions and block client overrides
-      const effectiveSystemInstruction = shouldUseSearchGrounding
+      let effectiveSystemInstruction = shouldUseSearchGrounding
         ? `${SYSTEM_INSTRUCTION}\n- When Google Search grounding is enabled, verify up-to-date official Indian portal URLs, statutory deadlines, helplines, and regulatory schemes from search results without fabricating links.`
         : SYSTEM_INSTRUCTION;
+
+      if (normalizedLang !== 'en') {
+        effectiveSystemInstruction += `\n- Respond in ${langMeta.label} (${normalizedLang}). Keep official Indian statutory section numbers, authority names, and portal URLs accurate.`;
+      }
 
       const deadline = Date.now() + CHAT_TOTAL_TIMEOUT_MS;
       const candidates = shouldUseSearchGrounding
@@ -976,7 +1086,7 @@ app.post(
 
         const attemptTimeout = Math.max(10000, Math.min(CHAT_PER_ATTEMPT_TIMEOUT_MS, remainingMs));
         try {
-          const attemptAi = getAiClient(attemptTimeout) || ai;
+          const attemptAi = aiOverride !== undefined ? aiOverride : (getAiClient(attemptTimeout) || ai);
           const modelConfig: any = {
             systemInstruction: effectiveSystemInstruction,
             httpOptions: {
@@ -1028,6 +1138,7 @@ app.post(
         model: actualModelUsed,
         modelUsed: actualModelUsed,
         configured: true,
+        language: normalizedLang,
         searchGrounded: shouldUseSearchGrounding && groundingSources.length > 0,
         groundingSources,
         webSearchQueries,
@@ -1179,7 +1290,9 @@ export function extractFactualContextFromDb(caseRow: any, evidenceRows: any[] = 
 
   const hasPinOrPassword = Boolean(
     allText.includes('otp') ||
+    allText.includes('ओटीपी') ||
     allText.includes('pin') ||
+    allText.includes('पिन') ||
     allText.includes('password') ||
     allText.includes('credentials')
   );
@@ -1187,7 +1300,9 @@ export function extractFactualContextFromDb(caseRow: any, evidenceRows: any[] = 
   return {
     hasDeceptiveCommunication:
       allText.includes('fake') ||
+      allText.includes('फर्जी') ||
       allText.includes('fraud') ||
+      allText.includes('धोखाधड़ी') ||
       allText.includes('deceived') ||
       allText.includes('scam') ||
       hasImpersonation,
@@ -1200,7 +1315,8 @@ export function extractFactualContextFromDb(caseRow: any, evidenceRows: any[] = 
       Number(caseRow?.disputed_amount || caseRow?.disputedAmount) > 0 ||
       allText.includes('debit') ||
       allText.includes('transferred') ||
-      allText.includes('loss'),
+      allText.includes('loss') ||
+      allText.includes('कट गए'),
     hasImpersonationOfPersonOrAuthority: hasImpersonation,
     hasComputerResourceUsedForImpersonation:
       allText.includes('phone') ||
@@ -1209,6 +1325,7 @@ export function extractFactualContextFromDb(caseRow: any, evidenceRows: any[] = 
       allText.includes('telegram') ||
       allText.includes('sms') ||
       allText.includes('app') ||
+      allText.includes('लिंक') ||
       allText.includes('portal'),
     hasPriorEntrustmentOfProperty:
       allText.includes('entrusted') ||
@@ -1354,12 +1471,37 @@ function generateDeterministicSummary(
   temporal: any,
   rbi: any,
   cpa: any,
-  offences: any
+  offences: any,
+  language: string = 'en'
 ): string {
   const supportedOffences = offences.assessedOffences
     .filter((o: any) => o.isPrimaFacieSupported)
     .map((o: any) => `${o.sectionNumber} (${o.provisionTitle})`)
     .join(', ');
+
+  if (language === 'hi') {
+    const rbiTextHi = rbi.isCommercialBankCovered
+      ? `आरबीआई वाणिज्यिक बैंक निर्देश (1 अक्टूबर 2026 को अद्यतन) के अंतर्गत आपकी श्रेणी "${rbi.tier}" है। ${rbi.plainLanguageSummary}`
+      : `आरबीआई वाणिज्यिक बैंक निर्देश: ${rbi.institutionScopeNotice}`;
+    const cpaTextHi = cpa.isEligible
+      ? `उपभोक्ता संरक्षण अधिनियम, 2019: ${cpa.recommendedForum} के समक्ष शिकायत दर्ज करने के लिए पात्र। ${cpa.reasoning}`
+      : `उपभोक्ता संरक्षण अधिनियम, 2019: ${cpa.reasoning}`;
+
+    return [
+      `# वित्तीय अपराध विधिक विश्लेषण: ${targetEntity}`,
+      `**विवादित राशि:** ₹${Number(disputedAmount).toLocaleString('en-IN')}`,
+      `**लागू आपराधिक संहिता:** ${temporal.status} (${temporal.explanation})`,
+      `\n### प्रथम दृष्टया अपराध प्रावधान आकलन:`,
+      supportedOffences
+        ? `वर्तमान तथ्यों के आधार पर निम्नलिखित प्रावधान प्रथम दृष्टया लागू हो सकते हैं: ${supportedOffences}।`
+        : `अतिरिक्त साक्ष्य के बिना वर्तमान तथ्यों पर कोई आपराधिक धारा पूर्णतः सिद्ध नहीं होती।`,
+      `\n### बैंकिंग ग्राहक सुरक्षा (RBI):`,
+      rbiTextHi,
+      `\n### सिविल एवं उपभोक्ता निवारण (CPA 2019):`,
+      cpaTextHi,
+      `\n*सावधानी सूचना:* औपचारिक आपराधिक आरोप केवल पुलिस जांच के बाद BNSS धारा 173 के अंतर्गत तय किए जा सकते हैं।`,
+    ].join('\n\n');
+  }
 
   const rbiText = rbi.isCommercialBankCovered
     ? `Under RBI Commercial Bank Directions (updated 1 October 2026), your status is categorized as "${rbi.tier}". ${rbi.plainLanguageSummary}`
@@ -1461,7 +1603,9 @@ app.post(
   verifySupabaseAuth,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { caseId, draftFacts, requestedModel } = req.body || {};
+      const { caseId, draftFacts, requestedModel, language } = req.body || {};
+      const normalizedLang = normalizeLanguageCode(language);
+      const langMeta = getLanguageMeta(normalizedLang);
 
       if (!caseId && (!draftFacts || typeof draftFacts !== 'object')) {
         return res.status(400).json({
@@ -1676,8 +1820,12 @@ app.post(
           const attemptTimeout = Math.max(10000, Math.min(LEGAL_ANALYSIS_PER_ATTEMPT_TIMEOUT_MS, remainingMs));
           try {
             const attemptAi = aiOverride !== undefined ? aiOverride : (getAiClient(attemptTimeout) || ai);
+            const localizedSystemInstruction =
+              normalizedLang !== 'en'
+                ? `${LEGAL_ANALYSIS_SYSTEM_INSTRUCTION}\n8. Respond strictly in ${langMeta.label} (${normalizedLang}), preserving official Indian statutory section numbers accurately.`
+                : LEGAL_ANALYSIS_SYSTEM_INSTRUCTION;
             const modelConfig: any = {
-              systemInstruction: LEGAL_ANALYSIS_SYSTEM_INSTRUCTION,
+              systemInstruction: localizedSystemInstruction,
               httpOptions: {
                 timeout: attemptTimeout,
               },
@@ -1720,7 +1868,8 @@ app.post(
           temporalEvaluation,
           rbiRemediesEvaluation,
           cpaEligibilityEvaluation,
-          offenceApplicability
+          offenceApplicability,
+          normalizedLang
         );
       }
 
@@ -1728,6 +1877,7 @@ app.post(
         success: true,
         isFallback,
         modelUsed: actualModelUsed,
+        language: normalizedLang,
         synthesis: plainLanguageSynthesis,
         findings: engineFindings,
       });
@@ -2177,8 +2327,60 @@ app.post(
   }
 );
 
+const legalRagSupabaseUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim();
+const legalRagServiceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const legalRagIngestToken = (process.env.LEGAL_RAG_INGEST_TOKEN || '').trim();
+const legalRagAdminSupabase =
+  legalRagSupabaseUrl && legalRagServiceRoleKey
+    ? createClient(legalRagSupabaseUrl, legalRagServiceRoleKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      })
+    : null;
+
+if (!legalRagAdminSupabase || !legalRagIngestToken) {
+  console.warn(
+    '[Legal RAG] Server-side ingestion is disabled until SUPABASE_SERVICE_ROLE_KEY and LEGAL_RAG_INGEST_TOKEN are configured.'
+  );
+}
+
+app.use(
+  '/api/legal-rag',
+  express.json({ limit: '25mb' }),
+  createLegalRagRouter({
+    getAi: () => (app.locals?.geminiAiClient !== undefined ? app.locals.geminiAiClient : getAiClient()),
+    adminSupabase: legalRagAdminSupabase,
+    verifySupabaseAuth,
+    ingestToken: legalRagIngestToken,
+  })
+);
+
 // Apply the general JSON parser to routes registered below
 app.use(generalBodyParser);
+
+// Authenticated single-use connection ticket issuer for WebSocket /api/live
+app.post(
+  '/api/live/ticket',
+  liveTicketLimiter,
+  verifySupabaseAuth,
+  generalBodyParser,
+  (req: AuthenticatedRequest, res: Response) => {
+    if (!req.user?.id) {
+      return res.status(401).json({
+        error: 'INVALID_OR_EXPIRED_TOKEN',
+        message: 'Verified user session is required to establish a Live Voice connection.',
+      });
+    }
+
+    const clientIp = resolveClientIp(req);
+    const issued = issueLiveVoiceTicket(req.user.id, clientIp);
+    return res.status(200).json({
+      success: true,
+      ticket: issued.ticket,
+      expiresAt: issued.expiresAt,
+      expiresInMs: issued.expiresInMs,
+    });
+  }
+);
 
 // -------------------------------------------------------------
 // SAFEGUARD 7: WebSocket with Max Payload, Concurrency Caps & Limits
@@ -2186,6 +2388,23 @@ app.use(generalBodyParser);
 const wss = new WebSocketServer({ noServer: true, maxPayload: 5 * 1024 * 1024 });
 
 wss.on('connection', async (clientWs: WebSocket, request: any) => {
+  // Defense-in-depth fail-closed authentication guard: never proceed without verified upgrade identity
+  const liveAuthUser = request?.liveAuthUser;
+  if (!liveAuthUser || typeof liveAuthUser.id !== 'string' || !liveAuthUser.id) {
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(
+        JSON.stringify({
+          error: 'Authentication required for Live Voice session.',
+          closed: true,
+        })
+      );
+      clientWs.close(1008, 'Unauthorized');
+    } else {
+      clientWs.close(1008, 'Unauthorized');
+    }
+    return;
+  }
+
   const clientIp = resolveClientIp(request);
   const sessionId = `live_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
@@ -2218,31 +2437,37 @@ wss.on('connection', async (clientWs: WebSocket, request: any) => {
 
   const sessionCleanup = registration.cleanup;
 
-  const apiKey = getGeminiApiKey();
-  if (!apiKey) {
-    if (clientWs.readyState === WebSocket.OPEN) {
-      clientWs.send(
-        JSON.stringify({
-          error: 'Gemini API key is not configured. Please set GEMINI_API_KEY in .env to use the Live Voice assistant.',
-          configured: false,
-          closed: true,
-        })
-      );
-      clientWs.close(1008, 'Gemini API key not configured');
-    }
-    sessionCleanup('API key missing');
-    return;
-  }
+  const customLiveConnect =
+    typeof app.locals?.geminiLiveConnect === 'function' ? app.locals.geminiLiveConnect : null;
 
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      apiVersion: 'v1alpha',
-      headers: {
-        'User-Agent': 'aistudio-build',
+  let ai: GoogleGenAI | null = null;
+  if (!customLiveConnect) {
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(
+          JSON.stringify({
+            error: 'Gemini API key is not configured. Please set GEMINI_API_KEY in .env to use the Live Voice assistant.',
+            configured: false,
+            closed: true,
+          })
+        );
+        clientWs.close(1008, 'Gemini API key not configured');
+      }
+      sessionCleanup('API key missing');
+      return;
+    }
+
+    ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        apiVersion: 'v1alpha',
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
       },
-    },
-  });
+    });
+  }
 
   let liveSession: any = null;
   let isReady = false;
@@ -2324,7 +2549,7 @@ wss.on('connection', async (clientWs: WebSocket, request: any) => {
 
   try {
     const liveModel = 'gemini-3.8-live';
-    liveSession = await ai.live.connect({
+    const liveConnectParams = {
       model: liveModel,
       config: {
         responseModalities: [Modality.AUDIO],
@@ -2387,7 +2612,10 @@ wss.on('connection', async (clientWs: WebSocket, request: any) => {
           sessionCleanup('Upstream voice error');
         },
       },
-    });
+    };
+    liveSession = customLiveConnect
+      ? await customLiveConnect(liveConnectParams)
+      : await ai!.live.connect(liveConnectParams);
 
     if (!liveSession) {
       throw new Error('Failed to initialize live session with model gemini-3.8-live');
@@ -2416,13 +2644,54 @@ wss.on('connection', async (clientWs: WebSocket, request: any) => {
   }
 });
 
-// Handle HTTP upgrade for /api/live with concurrency & IP checks
+// Handle HTTP upgrade for /api/live with ticket authentication, origin, concurrency & IP checks
 server.on('upgrade', (request, socket, head) => {
-  const { pathname } = new URL(request.url || '', `http://${request.headers.host}`);
-  if (pathname === '/api/live') {
+  const parsedUrl = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+  if (parsedUrl.pathname === '/api/live') {
     const origin = request.headers.origin;
     if (origin && !defaultAllowedOrigins.includes(origin)) {
       socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    // Never accept long-lived Supabase JWTs in WebSocket URLs
+    if (
+      parsedUrl.searchParams.has('token') ||
+      parsedUrl.searchParams.has('access_token') ||
+      parsedUrl.searchParams.has('jwt') ||
+      parsedUrl.searchParams.has('auth')
+    ) {
+      const body = JSON.stringify({
+        error: 'UNAUTHORIZED',
+        message: 'Supabase tokens must not be passed in WebSocket URLs. Request a single-use ticket via POST /api/live/ticket.',
+      });
+      socket.write(
+        `HTTP/1.1 401 Unauthorized\r\n` +
+          `Connection: close\r\n` +
+          `Content-Type: application/json\r\n` +
+          `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n` +
+          body
+      );
+      socket.destroy();
+      return;
+    }
+
+    // Authenticate via short-lived, single-use connection ticket BEFORE capacity/upstream Gemini connect
+    const ticket = parsedUrl.searchParams.get('ticket');
+    const ticketResult = consumeLiveVoiceTicket(ticket);
+    if (!ticketResult.valid) {
+      const body = JSON.stringify({
+        error: 'UNAUTHORIZED',
+        message: 'Valid Live Voice authentication ticket is required.',
+      });
+      socket.write(
+        `HTTP/1.1 401 Unauthorized\r\n` +
+          `Connection: close\r\n` +
+          `Content-Type: application/json\r\n` +
+          `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n` +
+          body
+      );
       socket.destroy();
       return;
     }
@@ -2445,7 +2714,8 @@ server.on('upgrade', (request, socket, head) => {
       return;
     }
 
-    // Record this permitted connection attempt
+    // Attach verified identity and record this permitted connection attempt
+    (request as any).liveAuthUser = { id: ticketResult.userId };
     liveVoiceManager.recordAttempt(clientIp);
 
     wss.handleUpgrade(request, socket, head, (ws) => {
@@ -2553,4 +2823,6 @@ process.on('SIGINT', () => handleShutdown('SIGINT'));
 export {
   app,
   server,
+  wss,
+  liveVoiceManager,
 };

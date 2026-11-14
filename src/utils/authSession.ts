@@ -152,8 +152,58 @@ export async function signOutFromSupabase(): Promise<{ error: string | null }> {
 }
 
 /**
+ * Attempts a single graceful Supabase session refresh and synchronizes local cache.
+ * Returns the refreshed non-empty access token, or null if refresh fails or identity shifts.
+ */
+export async function refreshAndGetAccessToken(): Promise<string | null> {
+  try {
+    const cachedSession = getAuthSession();
+    const expectedUserId = cachedSession?.user?.id || null;
+    const { data, error } = await supabase.auth.refreshSession();
+    const refreshedSession = data?.session;
+
+    if (error || !refreshedSession || !refreshedSession.user?.id) {
+      clearAuthSession();
+      return null;
+    }
+
+    if (expectedUserId && refreshedSession.user.id !== expectedUserId) {
+      console.warn('NivaranSetu session identity mismatch detected during refresh.');
+      clearAuthSession();
+      return null;
+    }
+
+    if (
+      refreshedSession.expires_at &&
+      Date.now() / 1000 >= refreshedSession.expires_at
+    ) {
+      clearAuthSession();
+      return null;
+    }
+
+    const token =
+      typeof refreshedSession.access_token === 'string'
+        ? refreshedSession.access_token.trim()
+        : '';
+    if (!token) {
+      clearAuthSession();
+      return null;
+    }
+
+    const authUser = mapSupabaseUserToAuthUser(refreshedSession.user);
+    saveAuthSession(authUser, true);
+    return token;
+  } catch (err) {
+    console.warn('Error refreshing Supabase session:', err);
+    clearAuthSession();
+    return null;
+  }
+}
+
+/**
  * Asynchronously restores and validates the active Supabase session.
- * Automatically checks token expiration and discards expired sessions.
+ * Automatically checks token expiration, attempts graceful refresh when expired
+ * or near expiry, and discards unrecoverable expired sessions.
  */
 export async function getSupabaseAuthSession(): Promise<{ user: AuthUser | null; session: any | null }> {
   try {
@@ -163,17 +213,33 @@ export async function getSupabaseAuthSession(): Promise<{ user: AuthUser | null;
       return { user: null, session: null };
     }
 
-    // Check expiration against expires_at timestamp (in seconds)
-    if (data.session.expires_at && Date.now() / 1000 > data.session.expires_at) {
-      console.warn('NivaranSetu session token expired.');
-      clearAuthSession();
-      return { user: null, session: null };
+    let activeSession = data.session;
+
+    // Check expiration against expires_at timestamp (in seconds, with 30s refresh buffer)
+    if (activeSession.expires_at && Date.now() / 1000 >= activeSession.expires_at - 30) {
+      const initialUserId = activeSession.user.id;
+      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+      const refreshed = refreshData?.session;
+
+      if (
+        refreshError ||
+        !refreshed ||
+        !refreshed.user?.id ||
+        refreshed.user.id !== initialUserId ||
+        (refreshed.expires_at && Date.now() / 1000 >= refreshed.expires_at)
+      ) {
+        console.warn('NivaranSetu session token expired and could not be refreshed.');
+        clearAuthSession();
+        return { user: null, session: null };
+      }
+
+      activeSession = refreshed;
     }
 
-    const authUser = mapSupabaseUserToAuthUser(data.session.user);
+    const authUser = mapSupabaseUserToAuthUser(activeSession.user);
     // Keep local cache in sync with verified Supabase session
     saveAuthSession(authUser, true);
-    return { user: authUser, session: data.session };
+    return { user: authUser, session: activeSession };
   } catch (err) {
     console.error('Error fetching Supabase session:', err);
     clearAuthSession();
@@ -350,6 +416,7 @@ export function getPersistedTab(): string {
       'dossier',
       'monitoring',
       'simplifier',
+      'legal_rag',
       'trust',
       'settings',
     ];

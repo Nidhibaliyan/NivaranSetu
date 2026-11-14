@@ -51,7 +51,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartCase, onOpenAut
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/60 shadow-2xs">
                   <Logo size="sm" showSubtitle={false} animated={true} />
                   <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                    A Bridge to Resolution.
+                    {t('tagline')}
                   </span>
                 </div>
                 <div className="inline-flex items-center gap-2 text-xs font-bold tracking-wider uppercase text-zinc-500 dark:text-zinc-400">
@@ -61,13 +61,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartCase, onOpenAut
               </div>
 
               {/* Bold Headline */}
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-zinc-950 dark:text-white leading-[1.12]">
-                Your Problem Deserves a <span className="text-[#007FFF]">Clear Path</span> to Resolution.
+              <h1 data-testid="landing-hero-title" className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-zinc-950 dark:text-white leading-[1.12]">
+                {t('hero_title')}
               </h1>
 
               {/* Description from prompt */}
               <p className="text-base sm:text-lg text-zinc-600 dark:text-zinc-400 max-w-xl leading-relaxed">
-                Understand your rights, organise your evidence and navigate grievance resolution with an intelligent assistant that speaks your language.
+                {t('hero_desc')}
               </p>
 
               {/* Action Buttons */}
@@ -76,7 +76,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartCase, onOpenAut
                   onClick={onStartCase}
                   className="flex items-center gap-2 px-6 py-3.5 text-xs font-semibold text-white bg-[#007FFF] hover:bg-[#0070e0] rounded-xl transition-all shadow-md shadow-[#007FFF]/25 hover:translate-y-[-1px] cursor-pointer"
                 >
-                  <span>Get started</span>
+                  <span>{t('cta_start_case')}</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
 
@@ -87,7 +87,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartCase, onOpenAut
                   }}
                   className="flex items-center gap-1.5 px-5 py-3.5 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white bg-zinc-100/80 dark:bg-zinc-800/80 rounded-xl hover:bg-zinc-200/80 dark:hover:bg-zinc-700/80 transition-all cursor-pointer"
                 >
-                  <span>See how it works</span>
+                  <span>{t('cta_explore_how')}</span>
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
@@ -243,7 +243,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartCase, onOpenAut
               Step-by-Step Flow
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-zinc-950 dark:text-white">
-              How NivaranSetu Works
+              {t('nav_how_it_works')}
             </h2>
             <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
               Transforming scattered information into an organised, evidence-backed case in four steps.
@@ -314,7 +314,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartCase, onOpenAut
               Core Principles
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-zinc-950 dark:text-white">
-              Why NivaranSetu?
+              {t('nav_why')}
             </h2>
             <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
               Not just another complaint box. We bridge the gap from confusion to resolution.
@@ -391,7 +391,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartCase, onOpenAut
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-zinc-950 dark:text-white">Multilingual Assistance</h4>
-                    <p className="text-xs text-zinc-500">Fully implemented in English and Hindi, with architectural support for Bengali, Marathi, Tamil, Telugu, and 8 more Indian languages.</p>
+                    <p className="text-xs text-zinc-500">{t('settings_language_desc')}</p>
                   </div>
                 </div>
 
@@ -421,7 +421,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartCase, onOpenAut
                   onClick={() => onOpenAuth('register')}
                   className="px-6 py-3 text-xs font-semibold text-white bg-[#007FFF] hover:bg-[#0070e0] rounded-xl transition-all shadow-sm shadow-[#007FFF]/25 cursor-pointer"
                 >
-                  Start Your Case Free
+                  {t('cta_start_case')}
                 </button>
               </div>
             </div>
@@ -461,20 +461,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartCase, onOpenAut
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
             <div className="flex items-center gap-2">
-              <span className="font-bold text-zinc-950 dark:text-white">NivaranSetu</span>
-              <span className="text-zinc-400">· A Bridge to Resolution</span>
+              <span className="font-bold text-zinc-950 dark:text-white">{t('brand_name')}</span>
+              <span className="text-zinc-400">· {t('tagline')}</span>
             </div>
 
             <div className="flex items-center gap-6 font-medium">
-              <a href="#how-it-works" className="hover:text-zinc-900 dark:hover:text-white transition-colors">About</a>
-              <a href="#accessibility" className="hover:text-zinc-900 dark:hover:text-white transition-colors">Accessibility</a>
-              <button onClick={() => onOpenAuth('login')} className="hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer">Login</button>
-              <button onClick={() => onOpenAuth('register')} className="text-[#007FFF] hover:underline cursor-pointer">Get Started</button>
+              <a href="#how-it-works" className="hover:text-zinc-900 dark:hover:text-white transition-colors">{t('nav_about')}</a>
+              <a href="#accessibility" className="hover:text-zinc-900 dark:hover:text-white transition-colors">{t('nav_accessibility')}</a>
+              <button onClick={() => onOpenAuth('login')} className="hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer">{t('cta_login')}</button>
+              <button onClick={() => onOpenAuth('register')} className="text-[#007FFF] hover:underline cursor-pointer">{t('cta_get_started')}</button>
             </div>
           </div>
 
           <div className="mt-8 pt-6 border-t border-zinc-100 dark:border-zinc-800/60 text-center sm:text-left text-[11px] text-zinc-400 leading-relaxed">
-            NivaranSetu is an informational intelligence platform. It does not provide legal representation, official government decisions, or guarantee statutory outcomes. Citizens submit final complaints with their own verification on official government channels.
+            {t('disclaimer_legal')}
           </div>
         </div>
       </footer>

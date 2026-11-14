@@ -290,9 +290,9 @@ async function runTests() {
   const PORT_VALIDATION = 3199;
 
   // -------------------------------------------------------------
-  // PHASE 1: Missing API Key Verification (Server 1)
+  // PHASE 1: Unauthenticated Protection on Real Production Server (Server 1)
   // -------------------------------------------------------------
-  console.log('--- PHASE 1: Missing API Key (503) ---');
+  console.log('--- PHASE 1: Unauthenticated Rejection (401) Before Gemini/Config Exposure ---');
   let server1: TestServerInstance | null = null;
   try {
     console.log(`[SPAWN] Starting production server on 127.0.0.1:${PORT_UNCONFIGURED} with missing GEMINI_API_KEY...`);
@@ -309,10 +309,10 @@ async function runTests() {
     const data1 = await res1.json().catch(() => ({}));
 
     assert(
-      res1.status === 503 && data1.configured === false && typeof data1.error === 'string' && data1.error.includes('not configured'),
-      '1: Missing API key returns HTTP 503 with configured: false',
-      { status: res1.status, configured: data1.configured },
-      { status: 503, configured: false }
+      res1.status === 401 && data1.error === 'MISSING_AUTHORIZATION_HEADER',
+      '1: Unauthenticated /api/gemini/chat returns HTTP 401 MISSING_AUTHORIZATION_HEADER',
+      { status: res1.status, error: data1.error },
+      { status: 401, error: 'MISSING_AUTHORIZATION_HEADER' }
     );
   } finally {
     console.log('[CLEANUP] Stopping Server 1...');
@@ -321,54 +321,55 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------
-  // PHASE 2: Placeholder API Key Verification (Server 2)
+  // PHASE 2: Authenticated Missing/Placeholder API Key (503) on Real Express App
   // -------------------------------------------------------------
-  console.log('\n--- PHASE 2: Placeholder API Key (503) ---');
-  let server2: TestServerInstance | null = null;
-  try {
-    console.log(`[SPAWN] Starting production server on 127.0.0.1:${PORT_UNCONFIGURED} with placeholder key...`);
-    server2 = await startProductionServer({
-      port: PORT_UNCONFIGURED,
-      geminiApiKey: 'your-gemini-api-key-here',
-    });
+  console.log('\n--- PHASE 2: Authenticated Missing/Placeholder API Key (503) ---');
+  const { app } = await import('../server');
+  const http = await import('node:http');
+  const origAuth = app.locals.supabaseAuthClient;
+  const origAi = app.locals.geminiAiClient;
+  app.locals.supabaseAuthClient = {
+    auth: {
+      getUser: async () => ({
+        data: { user: { id: 'prod-route-test-user', email: 'citizen@example.in' } },
+        error: null,
+      }),
+    },
+  } as any;
+  app.locals.geminiAiClient = null;
 
-    const res2 = await fetch(`${server2.baseUrl}/api/gemini/chat`, {
+  const authAppServer = http.createServer(app);
+  await new Promise<void>((resolve) => authAppServer.listen(0, '127.0.0.1', () => resolve()));
+  const authAppPort = (authAppServer.address() as any).port;
+  const authBaseUrl = `http://127.0.0.1:${authAppPort}`;
+  const authHeaders = {
+    'Content-Type': 'application/json',
+    Authorization: 'Bearer verified-route-test-jwt',
+  };
+
+  try {
+    const res2 = await fetch(`${authBaseUrl}/api/gemini/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ messages: [{ role: 'user', text: 'Hello' }] }),
     });
     const data2 = await res2.json().catch(() => ({}));
-
     assert(
-      res2.status === 503 && data2.configured === false,
-      '2: Placeholder API key returns HTTP 503 with configured: false',
+      res2.status === 503 && data2.configured === false && typeof data2.error === 'string' && data2.error.includes('not configured'),
+      '2: Authenticated request with unconfigured Gemini API key returns HTTP 503 configured: false',
       { status: res2.status, configured: data2.configured },
       { status: 503, configured: false }
     );
-  } finally {
-    console.log('[CLEANUP] Stopping Server 2...');
-    const closed = await stopProductionServer(server2);
-    assert(closed, 'Cleanup 2: Server 2 process terminated and loopback port 3198 closed');
-  }
 
-  // -------------------------------------------------------------
-  // PHASE 3: Request Validation & Limits with Dummy Key (Server 3)
-  // -------------------------------------------------------------
-  console.log('\n--- PHASE 3: Request Validation & Rate Limits (400, 413, 429) ---');
-  let server3: TestServerInstance | null = null;
-  const DUMMY_NON_SECRET_KEY = 'test-dummy-non-secret-key-for-validation-only';
+    // Enable mock Gemini client (never triggers outbound network) for validation & size limit checks
+    app.locals.geminiAiClient = {
+      models: { generateContent: async () => ({ text: 'ok' }) },
+    };
 
-  try {
-    console.log(`[SPAWN] Starting production server on 127.0.0.1:${PORT_VALIDATION} with dummy validation key...`);
-    server3 = await startProductionServer({
-      port: PORT_VALIDATION,
-      geminiApiKey: DUMMY_NON_SECRET_KEY,
-    });
-
-    // Test 3: Missing messages field -> 400 (Request #1 to /api/gemini/chat)
-    const res3 = await fetch(`${server3.baseUrl}/api/gemini/chat`, {
+    // Test 3: Missing messages field -> 400 (Request #2 to /api/gemini/chat on authAppServer)
+    const res3 = await fetch(`${authBaseUrl}/api/gemini/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({}),
     });
     const data3 = await res3.json().catch(() => ({}));
@@ -379,10 +380,10 @@ async function runTests() {
       { status: 400, error: 'Validation Error: "messages" must be a non-empty array.' }
     );
 
-    // Test 4: Empty messages array -> 400 (Request #2 to /api/gemini/chat)
-    const res4 = await fetch(`${server3.baseUrl}/api/gemini/chat`, {
+    // Test 4: Empty messages array -> 400
+    const res4 = await fetch(`${authBaseUrl}/api/gemini/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ messages: [] }),
     });
     const data4 = await res4.json().catch(() => ({}));
@@ -393,14 +394,14 @@ async function runTests() {
       { status: 400, error: 'Validation Error: "messages" must be a non-empty array.' }
     );
 
-    // Test 5: More than 50 messages -> 400 (Request #3 to /api/gemini/chat)
+    // Test 5: More than 50 messages -> 400
     const fiftyOneMessages = Array.from({ length: 51 }, (_, i) => ({
       role: 'user',
       text: `Message ${i + 1}`,
     }));
-    const res5 = await fetch(`${server3.baseUrl}/api/gemini/chat`, {
+    const res5 = await fetch(`${authBaseUrl}/api/gemini/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ messages: fiftyOneMessages }),
     });
     const data5 = await res5.json().catch(() => ({}));
@@ -411,10 +412,10 @@ async function runTests() {
       { status: 400, error: 'Validation Error: "messages" array cannot exceed 50 conversation turns.' }
     );
 
-    // Test 6: Invalid role -> 400 (Request #4 to /api/gemini/chat)
-    const res6 = await fetch(`${server3.baseUrl}/api/gemini/chat`, {
+    // Test 6: Invalid role -> 400
+    const res6 = await fetch(`${authBaseUrl}/api/gemini/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ messages: [{ role: 'admin', text: 'Hello' }] }),
     });
     const data6 = await res6.json().catch(() => ({}));
@@ -425,10 +426,10 @@ async function runTests() {
       { status: 400, error: 'contains Invalid role "admin"' }
     );
 
-    // Test 7: Empty or whitespace text -> 400 (Request #5 to /api/gemini/chat)
-    const res7 = await fetch(`${server3.baseUrl}/api/gemini/chat`, {
+    // Test 7: Empty or whitespace text -> 400
+    const res7 = await fetch(`${authBaseUrl}/api/gemini/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ messages: [{ role: 'user', text: '     ' }] }),
     });
     const data7 = await res7.json().catch(() => ({}));
@@ -439,11 +440,11 @@ async function runTests() {
       { status: 400, error: 'contains empty or non-string "text"' }
     );
 
-    // Test 8: Message text exceeding 10,000 characters -> 400 (Request #6 to /api/gemini/chat)
+    // Test 8: Message text exceeding 10,000 characters -> 400
     const oversizedText = 'A'.repeat(10001);
-    const res8 = await fetch(`${server3.baseUrl}/api/gemini/chat`, {
+    const res8 = await fetch(`${authBaseUrl}/api/gemini/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ messages: [{ role: 'user', text: oversizedText }] }),
     });
     const data8 = await res8.json().catch(() => ({}));
@@ -454,16 +455,15 @@ async function runTests() {
       { status: 400, error: 'contains exceeds maximum limit of 10,000 characters' }
     );
 
-    // Test 9: JSON body exceeding 256 KB -> 413 (Request #7 to /api/gemini/chat)
-    // Note: In server.ts, chatLimiter runs before chatBodyParser, so this consumes the 7th slot.
+    // Test 9: JSON body exceeding 256 KB -> 413
     console.log('[PROBE] Sending oversized JSON body (>256 KB) to test chatBodyParser limit...');
     const largePayload = JSON.stringify({
       messages: [{ role: 'user', text: 'Hello' }],
       padding: 'X'.repeat(300 * 1024), // 300 KB string
     });
-    const res9 = await fetch(`${server3.baseUrl}/api/gemini/chat`, {
+    const res9 = await fetch(`${authBaseUrl}/api/gemini/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: largePayload,
     });
     assert(
@@ -472,48 +472,61 @@ async function runTests() {
       res9.status,
       413
     );
+  } finally {
+    app.locals.supabaseAuthClient = origAuth;
+    app.locals.geminiAiClient = origAi;
+    authAppServer.close();
+  }
 
-    // Test 10: Strict rate-limit accounting (25 chat messages per minute per IP)
-    // - Readiness probe used /api/gemini/status -> 0 chatLimiter requests consumed.
-    // - Tests 3 through 9 issued exactly 7 requests to /api/gemini/chat.
-    // - We now send exactly 18 additional requests (7 + 18 = 25 total requests).
-    // - Every single one of these 18 requests must return HTTP 400 (not 429).
-    // - Then we send request #19 (overall #26), which must trigger HTTP 429.
-    console.log('[PROBE] Sending exactly 18 requests to exhaust chatLimiter threshold (25 total)...');
-    let all18Passed = true;
-    for (let i = 0; i < 18; i++) {
+  // -------------------------------------------------------------
+  // PHASE 3: Child Process Auth Enforcement & Rate Limits (401 -> 429) (Server 3)
+  // -------------------------------------------------------------
+  console.log('\n--- PHASE 3: Child Process Auth + Chat Rate Limits (401, 429) ---');
+  let server3: TestServerInstance | null = null;
+  const DUMMY_NON_SECRET_KEY = 'test-dummy-non-secret-key-for-validation-only';
+
+  try {
+    console.log(`[SPAWN] Starting production server on 127.0.0.1:${PORT_VALIDATION} with dummy validation key...`);
+    server3 = await startProductionServer({
+      port: PORT_VALIDATION,
+      geminiApiKey: DUMMY_NON_SECRET_KEY,
+    });
+
+    // Test 10: Strict rate-limit accounting (25 chat requests per minute per IP)
+    // chatLimiter runs before verifySupabaseAuth, protecting both Gemini and auth verification from flooding.
+    console.log('[PROBE] Sending 25 unauthenticated requests (expect 401) then 26th (expect 429)...');
+    let all25Rejected401 = true;
+    for (let i = 0; i < 25; i++) {
       const fillRes = await fetch(`${server3.baseUrl}/api/gemini/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [] }),
+        body: JSON.stringify({ messages: [{ role: 'user', text: 'Hello' }] }),
       });
 
-      if (fillRes.status !== 400) {
-        all18Passed = false;
+      if (fillRes.status !== 401) {
+        all25Rejected401 = false;
         assert(
           false,
-          `10a: Fill request #${i + 1}/18 returned HTTP 400 without premature rate limiting`,
+          `10a: Unauthenticated request #${i + 1}/25 returned HTTP 401 without premature rate limiting`,
           fillRes.status,
-          400
+          401
         );
-        break; // Do not continue sending requests after first unexpected response
+        break;
       }
     }
 
-    if (all18Passed) {
+    if (all25Rejected401) {
       assert(
         true,
-        '10a: Exactly 18 fill requests returned HTTP 400 without premature rate limiting (25 total chat requests received)',
+        '10a: Exactly 25 requests returned HTTP 401 before rate limit cutoff',
         25,
         25
       );
 
-      // Now send the 19th request (overall request #26) which must trigger rate limiting (HTTP 429)
-      console.log('[PROBE] Sending request #19 (overall #26) to verify rate limiter rejection (HTTP 429)...');
       const res10 = await fetch(`${server3.baseUrl}/api/gemini/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [] }),
+        body: JSON.stringify({ messages: [{ role: 'user', text: 'Hello' }] }),
       });
       const data10 = await res10.json().catch(() => ({}));
 
@@ -524,7 +537,6 @@ async function runTests() {
         { status: 429, error: 'contains Too many chat requests' }
       );
     }
-
   } finally {
     console.log('[CLEANUP] Stopping Server 3...');
     const closed = await stopProductionServer(server3);

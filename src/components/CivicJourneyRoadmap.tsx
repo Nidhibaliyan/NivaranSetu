@@ -8,6 +8,8 @@ import {
   Award,
   ArrowRight,
 } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext';
+import { CivicRoadmapCopy, getCivicRoadmapCopy } from '../i18n/civicRoadmapTranslations';
 
 export interface MilestoneDef {
   id: string;
@@ -105,7 +107,21 @@ const ROAD_PATH = `
 export const CivicJourneyRoadmap: React.FC<
   CivicJourneyRoadmapProps
 > = ({ onSelectMilestone, className = '' }) => {
+  const { language } = useLanguage();
+  const copy = getCivicRoadmapCopy(language);
   const [hoveredStep, setHoveredStep] = useState<string | null>(null);
+
+  const localizedSteps: MilestoneDef[] = FIVE_STEP_ROADMAP.map((step) => {
+    const localized = copy.steps[step.id as keyof CivicRoadmapCopy['steps']];
+    return localized
+      ? {
+          ...step,
+          stepNumber: localized.stepNumber,
+          title: localized.title,
+          desc: localized.desc,
+        }
+      : step;
+  });
 
   const CircleNode = ({ step }: { step: MilestoneDef }) => {
     const Icon = step.icon;
@@ -157,15 +173,15 @@ export const CivicJourneyRoadmap: React.FC<
       <div className="text-center mb-8 sm:mb-12 space-y-2">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200/60 dark:border-blue-900/40 text-[#007FFF] text-[11px] font-mono font-bold tracking-wider uppercase">
           <span className="w-1.5 h-1.5 rounded-full bg-[#007FFF] animate-pulse" />
-          Your Journey Begins here !!
+          {copy.badge}
         </div>
 
         <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-zinc-950 dark:text-white">
-          From confusion to clarity, from grievance to resolution.
+          {copy.headline}
         </h2>
 
         <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 max-w-md mx-auto">
-          Navigate smoothly from incident verification to certified dispute resolution.
+          {copy.subheadline}
         </p>
       </div>
 
@@ -225,7 +241,7 @@ export const CivicJourneyRoadmap: React.FC<
 
           <div className="absolute inset-0 grid grid-cols-5 px-1">
 
-            {FIVE_STEP_ROADMAP.map((step) => (
+            {localizedSteps.map((step) => (
               <div
                 key={step.id}
                 className="relative flex flex-col items-center justify-between cursor-pointer group"
@@ -286,7 +302,7 @@ export const CivicJourneyRoadmap: React.FC<
 
           <div className="absolute left-[17px] top-7 bottom-7 border-l-2 border-dashed border-white/80" />
 
-          {FIVE_STEP_ROADMAP.map((step) => {
+          {localizedSteps.map((step) => {
             const Icon = step.icon;
 
             return (

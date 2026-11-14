@@ -27,7 +27,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onResetSampleData,
   onClearAllCases,
 }) => {
-  const { language, setLanguage, mode, setMode } = useLanguage();
+  const { language, setLanguage, mode, setMode, t } = useLanguage();
   const { theme, setTheme } = useTheme();
   const [clearedNotice, setClearedNotice] = useState<string | null>(null);
 
@@ -51,11 +51,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="text-xs font-semibold text-[#007FFF] uppercase tracking-wider">
           Preferences & Governance
         </div>
-        <h2 className="text-xl sm:text-2xl font-bold text-zinc-950 dark:text-white">
-          Application Settings
+        <h2 data-testid="settings-heading" className="text-xl sm:text-2xl font-bold text-zinc-950 dark:text-white">
+          {t('settings_title')}
         </h2>
         <p className="text-xs text-zinc-500">
-          Configure visual themes, language defaults, reading assistance modes, and local privacy storage.
+          {t('settings_subtitle')}
         </p>
       </div>
 
@@ -130,11 +130,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-zinc-900 dark:text-white">Simple Mode (Default)</span>
+              <span className="text-xs font-bold text-zinc-900 dark:text-white">{t('simple_mode')}</span>
               {mode === 'simple' && <Check className="w-4 h-4 text-[#007FFF]" />}
             </div>
             <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
-              Everyday language, short explanations, and step-by-step guidance. Strips away confusing legal jargon so anyone can understand their case.
+              {t('simple_mode_desc')}
             </p>
           </div>
 
@@ -147,11 +147,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-zinc-900 dark:text-white">Detailed Mode</span>
+              <span className="text-xs font-bold text-zinc-900 dark:text-white">{t('detailed_mode')}</span>
               {mode === 'detailed' && <Check className="w-4 h-4 text-[#007FFF]" />}
             </div>
             <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
-              Formal legal terminology, statutory citations (e.g. CPA Section 35, RERA Section 18, RBI Circulars), and procedural filings.
+              {t('detailed_mode_desc')}
             </p>
           </div>
         </div>
@@ -161,10 +161,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#18181B] p-6 space-y-4 shadow-xs">
         <div>
           <h3 className="text-sm font-bold text-zinc-950 dark:text-white">
-            Primary Language
+            {t('settings_language_title')}
           </h3>
           <p className="text-xs text-zinc-500">
-            NivaranSetu is architected for 12 Indian languages. English and Hindi are fully implemented in this generation.
+            {t('settings_language_desc')}
           </p>
         </div>
 
@@ -174,6 +174,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             return (
               <button
                 key={lang.code}
+                data-testid={`settings-lang-${lang.code}`}
                 onClick={() => setLanguage(lang.code)}
                 className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                   isSelected

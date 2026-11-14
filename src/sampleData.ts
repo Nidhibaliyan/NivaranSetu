@@ -3,16 +3,16 @@ import { GrievanceCase, TrustCheckRecord, AuthorityGuide, LanguageOption, Custod
 export const SUPPORTED_LANGUAGES: LanguageOption[] = [
   { code: 'en', label: 'English', nativeLabel: 'English', supported: true },
   { code: 'hi', label: 'Hindi', nativeLabel: 'हिन्दी', supported: true },
-  { code: 'bn', label: 'Bengali', nativeLabel: 'বাংলা', supported: false },
-  { code: 'mr', label: 'Marathi', nativeLabel: 'मराठी', supported: false },
-  { code: 'ta', label: 'Tamil', nativeLabel: 'தமிழ்', supported: false },
-  { code: 'te', label: 'Telugu', nativeLabel: 'తెలుగు', supported: false },
-  { code: 'kn', label: 'Kannada', nativeLabel: 'ಕನ್ನಡ', supported: false },
-  { code: 'ml', label: 'Malayalam', nativeLabel: 'മലയാളം', supported: false },
-  { code: 'gu', label: 'Gujarati', nativeLabel: 'ગુજરાતી', supported: false },
-  { code: 'pa', label: 'Punjabi', nativeLabel: 'ਪੰਜਾਬੀ', supported: false },
-  { code: 'or', label: 'Odia', nativeLabel: 'ଓଡ଼ିଆ', supported: false },
-  { code: 'ur', label: 'Urdu', nativeLabel: 'اردو', supported: false },
+  { code: 'bn', label: 'Bengali', nativeLabel: 'বাংলা', supported: true },
+  { code: 'mr', label: 'Marathi', nativeLabel: 'मराठी', supported: true },
+  { code: 'ta', label: 'Tamil', nativeLabel: 'தமிழ்', supported: true },
+  { code: 'te', label: 'Telugu', nativeLabel: 'తెలుగు', supported: true },
+  { code: 'kn', label: 'Kannada', nativeLabel: 'ಕನ್ನಡ', supported: true },
+  { code: 'ml', label: 'Malayalam', nativeLabel: 'മലയാളം', supported: true },
+  { code: 'gu', label: 'Gujarati', nativeLabel: 'ગુજરાતી', supported: true },
+  { code: 'pa', label: 'Punjabi', nativeLabel: 'ਪੰਜਾਬੀ', supported: true },
+  { code: 'or', label: 'Odia', nativeLabel: 'ଓଡ଼ିଆ', supported: true },
+  { code: 'ur', label: 'Urdu', nativeLabel: 'اردو', supported: true },
 ];
 
 export const INITIAL_CASES: GrievanceCase[] = [

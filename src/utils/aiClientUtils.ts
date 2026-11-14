@@ -14,8 +14,26 @@
  * 3. Accurate error categorization (timeout vs network vs HTTP failure).
  */
 
+import { getValidAccessToken, refreshAndGetAccessToken } from './authSession';
+
 export const CHAT_CLIENT_TIMEOUT_MS = 35000;
 export const TRANSCRIBE_CLIENT_TIMEOUT_MS = 95000;
+
+export class AuthSessionError extends Error {
+  status: number;
+  code: 'AUTH_REQUIRED' | 'SESSION_EXPIRED';
+
+  constructor(
+    message: string,
+    status = 401,
+    code: 'AUTH_REQUIRED' | 'SESSION_EXPIRED' = 'AUTH_REQUIRED'
+  ) {
+    super(message);
+    this.name = 'AuthSessionError';
+    this.status = status;
+    this.code = code;
+  }
+}
 
 export interface ChatTurn {
   role: 'user' | 'model';
@@ -172,6 +190,90 @@ export async function fetchWithTimeout(
       externalSignal.removeEventListener('abort', onExternalAbort);
     }
   }
+}
+
+export interface AuthenticatedFetchAuthHooks {
+  getAccessToken?: () => Promise<string | null>;
+  refreshAccessToken?: () => Promise<string | null>;
+}
+
+/**
+ * Performs an HTTP fetch with timeout, attaching the current Supabase Bearer token.
+ * - Rejects with AuthSessionError before dispatching if no valid session token is available.
+ * - On HTTP 401, attempts a single token refresh and retries the request once.
+ */
+export async function authenticatedFetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number,
+  authHooks?: AuthenticatedFetchAuthHooks
+): Promise<Response> {
+  const getToken = authHooks?.getAccessToken ?? getValidAccessToken;
+  const refreshToken = authHooks?.refreshAccessToken ?? refreshAndGetAccessToken;
+
+  const initialToken = (await getToken())?.trim() || '';
+  if (!initialToken) {
+    throw new AuthSessionError(
+      'Your session has expired or you are not signed in. Please sign in again to continue.',
+      401,
+      'AUTH_REQUIRED'
+    );
+  }
+
+  const buildHeaders = (bearerToken: string): Headers => {
+    const headers = new Headers(options.headers || {});
+    headers.set('Authorization', `Bearer ${bearerToken}`);
+    return headers;
+  };
+
+  let response = await fetchWithTimeout(
+    url,
+    {
+      ...options,
+      headers: buildHeaders(initialToken),
+    },
+    timeoutMs
+  );
+
+  if (response.status === 401 && !options.signal?.aborted) {
+    const refreshedToken = (await refreshToken())?.trim() || '';
+    if (refreshedToken) {
+      response = await fetchWithTimeout(
+        url,
+        {
+          ...options,
+          headers: buildHeaders(refreshedToken),
+        },
+        timeoutMs
+      );
+    }
+  }
+
+  return response;
+}
+
+/**
+ * Extracts a clean, citizen-readable error message from a failed JSON/non-JSON API response.
+ */
+export async function extractAiErrorFromResponse(
+  response: Response,
+  fallback?: string
+): Promise<string> {
+  const defaultMsg = fallback || `Server responded with HTTP ${response.status}`;
+  try {
+    const data = await response.json();
+    if (data && typeof data === 'object') {
+      if (typeof data.message === 'string' && data.message.trim()) {
+        return data.message.trim();
+      }
+      if (typeof data.error === 'string' && data.error.trim()) {
+        return data.error.trim();
+      }
+    }
+  } catch {
+    // Non-JSON error body
+  }
+  return defaultMsg;
 }
 
 /**

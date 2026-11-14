@@ -6,6 +6,9 @@ export interface LegalRagSource {
   authority: string;
   actTitle?: string | null;
   sectionRef?: string | null;
+  pageNumber?: number | null;
+  storagePath?: string | null;
+  effectiveDate?: string | null;
   sourceUrl: string;
   language: string;
   similarity: number;
@@ -17,6 +20,7 @@ export interface LegalRagResponse {
   answer: string;
   sources: LegalRagSource[];
   insufficientEvidence: boolean;
+  verifiedRetrievalCount?: number;
   language: string;
   modelUsed?: string;
 }
