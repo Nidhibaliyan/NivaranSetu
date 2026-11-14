@@ -19,6 +19,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --legacy-peer-deps
+      - name: Ingestion CLI syntax
+        run: node --check scripts/ingest-legal-rag.mjs
       - name: TypeScript validation
         run: npm run lint
       - name: Production frontend build
