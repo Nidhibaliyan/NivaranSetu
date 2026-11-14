@@ -23,3 +23,5 @@ jobs:
         run: npm run lint
       - name: Production frontend build
         run: npm run build
+
+# The repository's existing Vite 8 / esbuild peer range requires legacy peer resolution with npm ci.
