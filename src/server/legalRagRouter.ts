@@ -224,8 +224,8 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
         `Distinguish the text of a provision from whether it applies to this user's facts.`,
         `Preserve official act names, section numbers and legal terms; explain them in the requested language.`,
         `Keep the answer structured and concise. End with a reminder that the output is informational, not legal advice.`,
-      ].join('\\n');
-      const prompt = `USER QUESTION:\\n${question}\\n\\nRETRIEVED PASSAGES:\\n${context}`;
+      ].join('\n');
+      const prompt = `USER QUESTION:\n${question}\n\nRETRIEVED PASSAGES:\n${context}`;
 
       const generated = await deps.ai.models.generateContent({
         model: generationModel,
