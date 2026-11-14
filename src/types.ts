@@ -290,6 +290,81 @@ export interface TrustCheckRecord {
   recommendedActions: string[];
 }
 
+export type TrustCheckEnhancedRiskLevel = 'low' | 'medium' | 'high';
+
+export type TrustCheckWarningSource = 'rule_based' | 'ai_assessment';
+
+export interface TrustCheckWarningSign {
+  indicator: string;
+  explanation: string;
+  source: TrustCheckWarningSource;
+}
+
+export interface TrustCheckScreenshotPayload {
+  mimeType: string;
+  dataBase64: string;
+  fileName?: string;
+  fileSizeBytes?: number;
+}
+
+export interface UpiCollectAnalysisRequest {
+  message: string;
+  requestedAmount?: number | string | null;
+  senderUpiId?: string;
+  screenshot?: TrustCheckScreenshotPayload | null;
+}
+
+export interface UpiCollectAnalysisResult {
+  mode: 'upi_collect';
+  riskLevel: TrustCheckEnhancedRiskLevel;
+  riskScore: number;
+  summary: string;
+  observedEvidence: string[];
+  riskIndicators: string[];
+  warningSigns: TrustCheckWarningSign[];
+  pinSafetyNotice: string;
+  recommendedImmediateActions: string[];
+  safeNextSteps: string[];
+  sensitiveDataRedacted: boolean;
+  modelUsed: string;
+  assessmentSource: 'gemini_and_deterministic_rules';
+  aiDisclaimer: string;
+  analyzedAt: string;
+}
+
+export type TransactionConsistency = 'consistent' | 'inconsistent' | 'uncertain';
+
+export interface SuspiciousTransactionAnalysisRequest {
+  amount: number | string;
+  dateTime: string;
+  counterpartyName?: string;
+  upiOrDestination?: string;
+  utrOrReferenceId?: string;
+  descriptionOrSms?: string;
+  recognizesTransaction: boolean;
+  personallyAuthorized: boolean;
+  screenshot?: TrustCheckScreenshotPayload | null;
+}
+
+export interface SuspiciousTransactionAnalysisResult {
+  mode: 'suspicious_transaction';
+  riskLevel: TrustCheckEnhancedRiskLevel;
+  riskScore: number;
+  summary: string;
+  consistencyAssessment: TransactionConsistency;
+  consistencyExplanation: string;
+  observedEvidence: string[];
+  riskIndicators: string[];
+  warningSigns: TrustCheckWarningSign[];
+  recommendedImmediateActions: string[];
+  suggestedNextSteps: string[];
+  sensitiveDataRedacted: boolean;
+  modelUsed: string;
+  assessmentSource: 'gemini_and_deterministic_rules';
+  aiDisclaimer: string;
+  analyzedAt: string;
+}
+
 export interface AuthorityGuide {
   id: string;
   category: GrievanceCategory;

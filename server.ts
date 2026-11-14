@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import { GoogleGenAI, LiveServerMessage, Modality, ThinkingLevel } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality, ThinkingLevel, Type } from '@google/genai';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { LiveVoiceManager, getClientIp } from './src/utils/liveVoiceLimits';
 import {
@@ -20,6 +20,19 @@ import {
   RbiEvaluationInput,
   CpaEvaluationInput,
 } from './src/utils/legalAnalysisEngine';
+import {
+  validateAndNormalizeUpiCollectInput,
+  validateAndNormalizeTransactionInput,
+  evaluateUpiCollectDeterministic,
+  evaluateTransactionDeterministic,
+  TRUSTCHECK_GEMINI_SYSTEM_INSTRUCTION,
+  buildUpiCollectGeminiPrompt,
+  buildTransactionGeminiPrompt,
+  validateAndMergeUpiCollectResponse,
+  validateAndMergeTransactionResponse,
+  UPI_PIN_SAFETY_NOTICE,
+  TRANSACTION_AI_DISCLAIMER,
+} from './src/utils/trustCheckAnalysis';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -499,12 +512,24 @@ const legalAnalysisLimiter = rateLimit({
   },
 });
 
+const trustCheckLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'RATE_LIMIT_EXCEEDED',
+    message: 'Too many TrustCheck analysis requests. Please wait a few moments before trying again.',
+  },
+});
+
 // -------------------------------------------------------------
 // SAFEGUARD 1 & 10: Endpoint-Specific Body Size Limits
 // -------------------------------------------------------------
 const chatBodyParser = express.json({ limit: '256kb' });
 const transcribeBodyParser = express.json({ limit: '20mb' }); // Accounts for Base64 expansion of up to 15MB audio
 const legalAnalysisBodyParser = express.json({ limit: '128kb' });
+const trustCheckBodyParser = express.json({ limit: '8mb' }); // Accounts for optional PNG/JPEG/WebP screenshot up to 5 MiB
 const generalBodyParser = express.json({ limit: '100kb' });
 
 
@@ -1660,6 +1685,352 @@ app.post(
       return res.status(500).json({
         error: 'LEGAL_ANALYSIS_ERROR',
         message: 'An error occurred while performing statutory legal analysis.',
+      });
+    }
+  }
+);
+
+// -------------------------------------------------------------
+// FEATURE 4: TrustCheck Enhanced AI Fraud Analysis (UPI Collect & Suspicious Transaction)
+// -------------------------------------------------------------
+const TRUSTCHECK_TOTAL_TIMEOUT_MS = 35000;
+const TRUSTCHECK_PER_ATTEMPT_TIMEOUT_MS = 20000;
+
+const UPI_COLLECT_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    riskLevel: { type: Type.STRING, description: 'Risk level: "low", "medium", or "high".' },
+    riskScore: { type: Type.INTEGER, description: 'Calibrated risk score from 0 to 100.' },
+    summary: { type: Type.STRING, description: 'Clear plain-language assessment summary.' },
+    observedEvidence: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'Strictly factual observations from submitted fields or screenshot.',
+    },
+    riskIndicators: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'Potential fraud/risk indicators inferred from the request.',
+    },
+    warningSigns: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          indicator: { type: Type.STRING },
+          explanation: { type: Type.STRING },
+        },
+        required: ['indicator', 'explanation'],
+      },
+    },
+    recommendedImmediateActions: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+    safeNextSteps: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+  },
+  required: [
+    'riskLevel',
+    'riskScore',
+    'summary',
+    'observedEvidence',
+    'riskIndicators',
+    'warningSigns',
+    'recommendedImmediateActions',
+    'safeNextSteps',
+  ],
+};
+
+const TRANSACTION_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    riskLevel: { type: Type.STRING, description: 'Risk level: "low", "medium", or "high".' },
+    riskScore: { type: Type.INTEGER, description: 'Calibrated risk score from 0 to 100.' },
+    summary: { type: Type.STRING, description: 'Clear plain-language assessment summary.' },
+    consistencyAssessment: {
+      type: Type.STRING,
+      description: 'Consistency with user description/answers: "consistent", "inconsistent", or "uncertain".',
+    },
+    consistencyExplanation: { type: Type.STRING },
+    observedEvidence: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+    riskIndicators: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+    warningSigns: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          indicator: { type: Type.STRING },
+          explanation: { type: Type.STRING },
+        },
+        required: ['indicator', 'explanation'],
+      },
+    },
+    recommendedImmediateActions: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+    suggestedNextSteps: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+  },
+  required: [
+    'riskLevel',
+    'riskScore',
+    'summary',
+    'consistencyAssessment',
+    'consistencyExplanation',
+    'observedEvidence',
+    'riskIndicators',
+    'warningSigns',
+    'recommendedImmediateActions',
+    'suggestedNextSteps',
+  ],
+};
+
+async function executeTrustCheckGemini<T>(
+  req: AuthenticatedRequest,
+  promptText: string,
+  screenshot: { mimeType: string; dataBase64: string } | null,
+  responseSchema: any,
+  validateAndBuild: (rawText: string, modelUsed: string) => T
+): Promise<{ ok: true; data: T } | { ok: false; status: number; error: string; message: string }> {
+  const aiOverride = req.app?.locals?.geminiAiClient;
+  const ai = aiOverride !== undefined ? aiOverride : getAiClient(TRUSTCHECK_PER_ATTEMPT_TIMEOUT_MS);
+
+  if (!ai) {
+    return {
+      ok: false,
+      status: 503,
+      error: 'AI_UNAVAILABLE',
+      message:
+        'Live AI analysis is currently unavailable because Gemini is not configured. Review the deterministic safety observations below and verify only through your official bank or UPI app.',
+    };
+  }
+
+  const candidateModels = resolveModelCandidates(undefined, 'general');
+  const deadline = Date.now() + TRUSTCHECK_TOTAL_TIMEOUT_MS;
+  let sawTimeout = false;
+  let sawRateLimit = false;
+  let sawMalformed = false;
+
+  const userParts: any[] = [];
+  if (screenshot) {
+    userParts.push({
+      inlineData: {
+        mimeType: screenshot.mimeType,
+        data: screenshot.dataBase64,
+      },
+    });
+  }
+  userParts.push({ text: promptText });
+
+  for (const model of candidateModels) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs < 5000) {
+      sawTimeout = true;
+      break;
+    }
+
+    const attemptTimeout = Math.max(5000, Math.min(TRUSTCHECK_PER_ATTEMPT_TIMEOUT_MS, remainingMs));
+    try {
+      const attemptAi = aiOverride !== undefined ? aiOverride : (getAiClient(attemptTimeout) || ai);
+      const modelConfig: any = {
+        systemInstruction: TRUSTCHECK_GEMINI_SYSTEM_INSTRUCTION,
+        responseMimeType: 'application/json',
+        responseSchema,
+        httpOptions: {
+          timeout: attemptTimeout,
+        },
+        abortSignal: AbortSignal.timeout(attemptTimeout),
+      };
+      if (model === 'gemini-4-hydrogen' || model === 'gemini-4-argon' || model === 'gemini-4-carbon') {
+        modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+      }
+
+      const aiResponse = await attemptAi.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: userParts }],
+        config: modelConfig,
+      });
+
+      const validated = validateAndBuild(aiResponse?.text || '', model);
+      return { ok: true, data: validated };
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      if (msg.startsWith('MALFORMED_GEMINI_RESPONSE')) {
+        sawMalformed = true;
+        console.warn(`[TrustCheck] Model ${model} returned malformed structured JSON, trying fallback.`);
+      } else if (isTimeoutError(err)) {
+        sawTimeout = true;
+        console.warn(`[TrustCheck] Model ${model} timed out after ${attemptTimeout}ms, trying fallback.`);
+      } else if (err?.status === 429 || err?.statusCode === 429 || msg.toLowerCase().includes('rate limit')) {
+        sawRateLimit = true;
+        console.warn(`[TrustCheck] Model ${model} rate-limited (429), trying fallback.`);
+      } else {
+        const status = err?.status || err?.statusCode || 'unavailable';
+        console.warn(`[TrustCheck] Model ${model} failed (status=${status}): ${maskSensitive(msg)}`);
+      }
+    }
+  }
+
+  if (sawTimeout) {
+    return {
+      ok: false,
+      status: 504,
+      error: 'AI_TIMEOUT',
+      message:
+        'AI analysis timed out before completing. No fabricated AI verdict was generated — please review the rule-based safety guidance below and retry.',
+    };
+  }
+  if (sawRateLimit) {
+    return {
+      ok: false,
+      status: 429,
+      error: 'AI_RATE_LIMITED',
+      message:
+        'AI analysis is temporarily rate-limited. Please wait a moment and try again, or rely on the rule-based safety guidance below.',
+    };
+  }
+  if (sawMalformed) {
+    return {
+      ok: false,
+      status: 502,
+      error: 'MALFORMED_AI_RESPONSE',
+      message:
+        'The AI service returned an unreadable response format and was safely rejected. Review the rule-based safety guidance below and retry.',
+    };
+  }
+  return {
+    ok: false,
+    status: 503,
+    error: 'AI_SERVICE_ERROR',
+    message:
+      'Live AI analysis could not be reached right now. Review the deterministic safety guidance below and verify only through your official bank or UPI app.',
+  };
+}
+
+app.post(
+  '/api/gemini/trustcheck/upi-collect',
+  trustCheckLimiter,
+  trustCheckBodyParser,
+  verifySupabaseAuth,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const normalized = validateAndNormalizeUpiCollectInput(req.body);
+      if (!normalized.valid) {
+        return res.status(400).json({
+          error: 'VALIDATION_ERROR',
+          message: normalized.error,
+        });
+      }
+
+      const baseline = evaluateUpiCollectDeterministic(normalized.data);
+      const promptText = buildUpiCollectGeminiPrompt(normalized.data, baseline);
+
+      const outcome = await executeTrustCheckGemini(
+        req,
+        promptText,
+        normalized.data.screenshot,
+        UPI_COLLECT_RESPONSE_SCHEMA,
+        (rawText, modelUsed) =>
+          validateAndMergeUpiCollectResponse(
+            rawText,
+            baseline,
+            modelUsed,
+            normalized.data.sensitiveDataRedacted
+          )
+      );
+
+      if (!outcome.ok) {
+        return res.status(outcome.status).json({
+          error: outcome.error,
+          message: outcome.message,
+          deterministicObservations: {
+            minRiskLevel: baseline.minRiskLevel,
+            observedEvidence: baseline.observedEvidence,
+            warningSigns: baseline.warningSigns,
+            pinSafetyNotice: UPI_PIN_SAFETY_NOTICE,
+            recommendedImmediateActions: baseline.recommendedImmediateActions,
+            safeNextSteps: baseline.safeNextSteps,
+          },
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        result: outcome.data,
+      });
+    } catch (err: any) {
+      console.error('Unhandled UPI collect TrustCheck error:', maskSensitive(err?.message || String(err)));
+      return res.status(500).json({
+        error: 'TRUSTCHECK_ERROR',
+        message: 'An unexpected error occurred while analyzing the UPI collect request.',
+      });
+    }
+  }
+);
+
+app.post(
+  '/api/gemini/trustcheck/transaction',
+  trustCheckLimiter,
+  trustCheckBodyParser,
+  verifySupabaseAuth,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const normalized = validateAndNormalizeTransactionInput(req.body);
+      if (!normalized.valid) {
+        return res.status(400).json({
+          error: 'VALIDATION_ERROR',
+          message: normalized.error,
+        });
+      }
+
+      const baseline = evaluateTransactionDeterministic(normalized.data);
+      const promptText = buildTransactionGeminiPrompt(normalized.data, baseline);
+
+      const outcome = await executeTrustCheckGemini(
+        req,
+        promptText,
+        normalized.data.screenshot,
+        TRANSACTION_RESPONSE_SCHEMA,
+        (rawText, modelUsed) =>
+          validateAndMergeTransactionResponse(rawText, baseline, normalized.data, modelUsed)
+      );
+
+      if (!outcome.ok) {
+        return res.status(outcome.status).json({
+          error: outcome.error,
+          message: outcome.message,
+          deterministicObservations: {
+            minRiskLevel: baseline.minRiskLevel,
+            observedEvidence: baseline.observedEvidence,
+            warningSigns: baseline.warningSigns,
+            recommendedImmediateActions: baseline.recommendedImmediateActions,
+            suggestedNextSteps: baseline.safeNextSteps,
+            aiDisclaimer: TRANSACTION_AI_DISCLAIMER,
+          },
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        result: outcome.data,
+      });
+    } catch (err: any) {
+      console.error('Unhandled transaction TrustCheck error:', maskSensitive(err?.message || String(err)));
+      return res.status(500).json({
+        error: 'TRUSTCHECK_ERROR',
+        message: 'An unexpected error occurred while analyzing the transaction.',
       });
     }
   }
