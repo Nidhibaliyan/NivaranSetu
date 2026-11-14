@@ -233,7 +233,7 @@ export function createLegalRagRouter(deps: LegalRagDependencies): Router {
       if (!answer) throw new Error('The language model returned an empty answer.');
 
       // Do not display unsupported or fabricated citation markers as grounded legal output.
-      const citedMarkers = answer.match(/\\[S\\d+\\]/g) || [];
+      const citedMarkers = answer.match(/\[S\d+\]/g) || [];
       const allowedMarkers = new Set(sources.map((source: any) => `[${source.marker}]`));
       const hasOnlyRetrievedCitations =
         citedMarkers.length > 0 && citedMarkers.every((marker) => allowedMarkers.has(marker));
