@@ -350,6 +350,7 @@ export function getPersistedTab(): string {
       'dossier',
       'monitoring',
       'simplifier',
+      'legal_rag',
       'trust',
       'settings',
     ];
