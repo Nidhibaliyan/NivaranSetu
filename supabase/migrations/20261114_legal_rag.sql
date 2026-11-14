@@ -50,6 +50,11 @@ create index if not exists legal_documents_active_idx
 alter table public.legal_documents enable row level security;
 alter table public.legal_document_chunks enable row level security;
 
+-- Explicit table privileges: authenticated citizens can read through RLS only.
+grant usage on schema extensions to authenticated;
+grant select on public.legal_documents, public.legal_document_chunks to authenticated;
+revoke insert, update, delete on public.legal_documents, public.legal_document_chunks from anon, authenticated;
+
 -- Authenticated users can read only verified, active legal-source records.
 drop policy if exists "Read verified active legal documents" on public.legal_documents;
 create policy "Read verified active legal documents"
@@ -113,4 +118,5 @@ as $$
   limit greatest(1, least(match_count, 12));
 $$;
 
+revoke all on function public.match_legal_chunks(extensions.vector, float, int) from public, anon;
 grant execute on function public.match_legal_chunks(extensions.vector, float, int) to authenticated;
